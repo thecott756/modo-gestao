@@ -7,7 +7,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.3/dist/umd/supabase.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet"/>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;}
@@ -36,7 +36,11 @@ const {useState,useEffect,useRef,useCallback}=React;
 
 const SUPA_URL="https://murwkosaxlpkdrotuotk.supabase.co";
 const SUPA_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im11cndrb3NheGxwa2Ryb3R1b3RrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI4OTIyNjIsImV4cCI6MjA4ODQ2ODI2Mn0.7FPuHUyRHYyWXIBc2Y-BPOsmsvBGLigaZb44KzP9HRw";
-const sb=supabase.createClient(SUPA_URL,SUPA_KEY);
+const _supa=window.supabase||window.Supabase;
+const sb=_supa.createClient(SUPA_URL,SUPA_KEY,{
+  auth:{persistSession:false},
+  global:{fetch:(...args)=>fetch(...args)}
+});
 
 const C={
   bg:"#F7F5F2",surface:"#FFFFFF",hover:"#F2F0EC",border:"#E8E4DF",
