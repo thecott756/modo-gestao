@@ -275,7 +275,8 @@ function App(){
   useEffect(()=>{
     if(!user)return;
     const check=async()=>{
-      const{data}=await sb.from("sessions").select("active").eq("id",sessionId.current).single().catch(()=>({data:null}));
+      let _sd;try{const r=await sb.from("sessions").select("active").eq("id",sessionId.current).single();_sd=r.data;}catch(e){_sd=null;}
+      const{data}={data:_sd};
       if(data&&!data.active){setUser(null);showToast("Sua sessão foi encerrada.","info");}
     };
     const t=setInterval(check,30000);
@@ -286,7 +287,7 @@ function App(){
     if(!user)return;
     const act={id:uid(),date:new Date().toISOString(),username:user.name,role:user.role,action,detail};
     setActivities(p=>[act,...p].slice(0,200));
-    await sb.from("activities").insert(act).catch(()=>{});
+    try{await sb.from("activities").insert(act);}catch(e){}
   },[user]);
 
   const loadAll=useCallback(async()=>{
@@ -319,12 +320,12 @@ function App(){
   const handleLogin=async(u)=>{
     setUser(u);
     // register session
-    await sb.from("sessions").insert({id:sessionId.current,user_login:u.login,active:true}).catch(()=>{});
+    try{await sb.from("sessions").insert({id:sessionId.current,user_login:u.login,active:true});}catch(e){}
     showToast(`Bem-vindo, ${u.name}.`);
   };
 
   const handleLogout=async()=>{
-    await sb.from("sessions").update({active:false}).eq("id",sessionId.current).catch(()=>{});
+    try{await sb.from("sessions").update({active:false}).eq("id",sessionId.current);}catch(e){}
     await logActivity("logout","Saiu do sistema");
     setUser(null);
   };
@@ -335,12 +336,12 @@ function App(){
   const addMov=async(data)=>{
     const mv={id:uid(),date:new Date().toISOString(),type:data.type,loc:data.loc,descricao:data.desc,obs:data.obs||"",username:user?.name};
     setMovements(p=>[mv,...p]);
-    await sb.from("movements").insert(mv).catch(()=>{});
+    try{await sb.from("movements").insert(mv);}catch(e){}
   };
 
   const saveNfeConfig=async(cfg)=>{
     setNfeConfigState(cfg);
-    await sb.from("nfe_config").upsert({id:1,cnpj:cfg.cnpj,ie:cfg.ie,razao_social:cfg.razaoSocial,uf:cfg.uf,crt:cfg.crt,ambiente:cfg.ambiente,serie:cfg.serie,next_num:cfg.nextNum}).catch(()=>{});
+    try{await sb.from("nfe_config").upsert({id:1,cnpj:cfg.cnpj,ie:cfg.ie,razao_social:cfg.razaoSocial,uf:cfg.uf,crt:cfg.crt,ambiente:cfg.ambiente,serie:cfg.serie,next_num:cfg.nextNum});}catch(e){}
   };
 
   const emitirNFe=async(sale,client)=>{
@@ -351,7 +352,7 @@ function App(){
       serie:nfeConfig.serie,ambiente:nfeConfig.ambiente,status:"autorizada",
       total:sale.total,client_name:sale.clientName,client_cpf:client?.cpf||"",emitente:nfeConfig.razaoSocial,
     };
-    await sb.from("issued_nfe").insert(nfe).catch(()=>{});
+    try{await sb.from("issued_nfe").insert(nfe);}catch(e){}
     const newCfg={...nfeConfig,nextNum:nfeConfig.nextNum+1};
     await saveNfeConfig(newCfg);
     setIssuedNFe(p=>[{...nfe,clientName:nfe.client_name,clientCpf:nfe.client_cpf},...p]);
