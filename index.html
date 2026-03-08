@@ -484,6 +484,10 @@ function PDV({stkL,setStkL,products,clients,setClients,setSales,addMov,showToast
   const [wpPhone,setWpPhone]=useState("");
   const [freight,setFreight]=useState({cep:"",service:"pac",price:0,calc:false});
   const [saving,setSaving]=useState(false);
+  const [pickerProd,setPickerProd]=useState(null);
+  const [pickerSz,setPickerSz]=useState(null);
+  const [pickerQty,setPickerQty]=useState(1);
+  const [prodSearch,setProdSearch]=useState("");
 
   const isWholesale=selClient&&selClient.type==="wholesale";
   const prod=products.find(p=>p.id===Number(selProd));
@@ -598,7 +602,7 @@ function PDV({stkL,setStkL,products,clients,setClients,setSales,addMov,showToast
     if(!newClient.name){showToast("Nome obrigatório","error");return;}
     const c={...newClient,id:uid(),cpf_cnpj:newClient.cpfCnpj,created_at:new Date().toISOString()};
     await sb.from("clients").insert({id:c.id,name:c.name,cpf_cnpj:c.cpfCnpj,doc_type:c.docType,phone:c.phone,email:c.email,address:c.address,type:c.type,created_at:c.created_at});
-    setClients(p=>[...p,c]);setSelClient(c);setStep("sale");showToast("Cliente cadastrado!");
+    setClients(p=>[...p,{...c,cpf_cnpj:c.cpfCnpj}]);setSelClient(c);setStep("sale");showToast("Cliente cadastrado!");
   };
 
   const resetSale=()=>{setStep("client");setClientMode(null);setSelClient(null);setCart([]);setNewClient(blankC);setAppliedPromo(null);setPromoCode("");setSaleMode("balcao");};
@@ -676,13 +680,6 @@ function PDV({stkL,setStkL,products,clients,setClients,setSales,addMov,showToast
       )}
     </div>
   );
-
-  // ── STEP 2 — SALE ──
-  // Product picker state
-  const [pickerProd,setPickerProd]=useState(null); // selected product in picker
-  const [pickerSz,setPickerSz]=useState(null);     // selected size
-  const [pickerQty,setPickerQty]=useState(1);
-  const [prodSearch,setProdSearch]=useState("");
 
   const filteredProds=products.filter(p=>
     p.name.toLowerCase().includes(prodSearch.toLowerCase())||
@@ -1019,6 +1016,14 @@ function Clients({clients,setClients,sales,showToast,logActivity}){
 
   const save=async()=>{
     if(!form.name){showToast("Nome obrigatório","error");return;}
+    if(form.cpfCnpj){
+      const cpfClean=form.cpfCnpj.replace(/\D/g,"");
+      const dup=clients.find(c=>{
+        const existing=(c.cpf_cnpj||c.cpf||"").replace(/\D/g,"");
+        return existing&&existing===cpfClean;
+      });
+      if(dup){showToast("CPF/CNPJ já cadastrado: "+cleanName(dup.name),"error");return;}
+    }
     const type=form.docType==="cnpj"?"wholesale":form.type;
     const fullAddress=`${form.address}${form.number?", "+form.number:""}`;
     const c={id:uid(),name:form.name,trade_name:form.tradeName,cpf_cnpj:form.cpfCnpj,
@@ -1037,11 +1042,13 @@ function Clients({clients,setClients,sales,showToast,logActivity}){
   const clientSales=sales.filter(s=>s.client_id===selId||s.clientId===selId);
   const totalSpent=clientSales.reduce((a,s)=>a+(s.total||0),0);
 
-  const varejo=clients.filter(c=>c.type==="retail"||c.type!=="wholesale");
-  const atacado=clients.filter(c=>c.type==="wholesale");
+  const cleanName=n=>(n||"").replace(/^[\d.\s]+/,"");
+  const sortedClients=[...clients].sort((a,b)=>cleanName(a.name).localeCompare(cleanName(b.name),"pt-BR"));
+  const varejo=sortedClients.filter(c=>c.type==="retail"||c.type!=="wholesale");
+  const atacado=sortedClients.filter(c=>c.type==="wholesale");
   const listToShow=(clientTab==="varejo"?varejo:atacado).filter(c=>
-    c.name.toLowerCase().includes(search.toLowerCase())||
-    (c.cpf_cnpj&&c.cpf_cnpj.includes(search))||(c.phone&&c.phone.includes(search))
+    cleanName(c.name).toLowerCase().includes(search.toLowerCase())||
+    (c.cpf_cnpj&&c.cpf_cnpj.includes(search))||(c.cpf&&c.cpf.includes(search))||(c.phone&&c.phone.includes(search))
   );
 
   // DETAIL
@@ -1507,93 +1514,156 @@ function Products({products,setProducts,setStkG,setStkL,sales,showToast,logActiv
 
 
 function StockPage({title,loc,stock,setStock,products,addMov,showToast,table,logActivity}){
-  const [view,setView]=useState("list");
+  const [selProd,setSelProd]=useState(null);
   const [type,setType]=useState("entrada");
-  const [sP,setSP]=useState("");const [sSz,setSSz]=useState("");const [qty,setQty]=useState(1);const [obs,setObs]=useState("");const [search,setSearch]=useState("");
-  const product=products.find(p=>p.id===Number(sP));
+  const [qtys,setQtys]=useState({});  // {sz: qty}
+  const [obs,setObs]=useState("");
+  const [saving,setSaving]=useState(false);
+  const [search,setSearch]=useState("");
   const getQty=(pId,sz)=>stock.find(s=>s.pId===pId&&s.sz===sz)?.qty||0;
 
-  const handle=async()=>{
-    if(!sP||!sSz||qty<1){showToast("Preencha todos os campos","error");return;}
-    const pId=Number(sP);const cur=getQty(pId,sSz);
-    if(type==="saida"&&qty>cur){showToast("Estoque insuficiente!","error");return;}
-    const newQty=cur+(type==="entrada"?qty:-qty);
-    const existing=stock.find(s=>s.pId===pId&&s.sz===sSz);
-    if(existing?._id){await sb.from(table).update({qty:newQty}).eq("id",existing._id);}
-    else{const{data}=await sb.from(table).insert({product_id:pId,size:sSz,qty:newQty}).select().single();
-      if(data)setStock(prev=>[...prev,{pId,sz:sSz,qty:newQty,_id:data.id}]);}
-    setStock(prev=>{const idx=prev.findIndex(s=>s.pId===pId&&s.sz===sSz);
-      if(idx>=0){const u=[...prev];u[idx]={...u[idx],qty:newQty};return u;}return prev;});
-    await addMov({type,loc,desc:`${product.name} – Tam ${sSz} – ${qty} un.`,obs});
-    await logActivity(type==="entrada"?"entrada_estoque":"saida_estoque",`${product.name} Tam ${sSz} · ${qty} un. · ${title}`);
-    showToast(`${type==="entrada"?"Entrada":"Saída"} registrada!`);
-    setView("list");setSP("");setSSz("");setQty(1);setObs("");
+  const handleSubmit=async()=>{
+    if(!selProd){showToast("Selecione um produto","error");return;}
+    const entries=Object.entries(qtys).filter(([sz,q])=>Number(q)>0);
+    if(entries.length===0){showToast("Informe ao menos uma quantidade","error");return;}
+    setSaving(true);
+    try{
+      for(const [sz,q] of entries){
+        const qty=Number(q);
+        const pId=selProd.id;
+        const cur=getQty(pId,sz);
+        if(type==="saida"&&qty>cur){showToast(`Estoque insuficiente: ${sz}`,"error");continue;}
+        const newQty=cur+(type==="entrada"?qty:-qty);
+        const existing=stock.find(s=>s.pId===pId&&s.sz===sz);
+        if(existing?._id){await sb.from(table).update({qty:newQty}).eq("id",existing._id);}
+        else{const{data}=await sb.from(table).insert({product_id:pId,size:sz,qty:newQty}).select().single();
+          if(data)setStock(prev=>[...prev,{pId,sz,qty:newQty,_id:data.id}]);}
+        setStock(prev=>{const idx=prev.findIndex(s=>s.pId===pId&&s.sz===sz);
+          if(idx>=0){const u=[...prev];u[idx]={...u[idx],qty:newQty};return u;}return prev;});
+        await addMov({type,loc,desc:`${selProd.name} – Tam ${sz} – ${qty} un.`,obs});
+      }
+      const total=entries.reduce((a,[,q])=>a+Number(q),0);
+      await logActivity(type==="entrada"?"entrada_estoque":"saida_estoque",`${selProd.name} · ${total} un. · ${title}`);
+      showToast(`${type==="entrada"?"Entrada":"Saída"} registrada! (${total} peças)`);
+      setSelProd(null);setQtys({});setObs("");
+    }catch(e){showToast("Erro: "+e.message,"error");}
+    setSaving(false);
   };
 
-  const filtered=products.filter(p=>p.name.toLowerCase().includes(search.toLowerCase())||p.sku?.toLowerCase().includes(search.toLowerCase()));
-
-  if(view==="form")return(
-    <div className="fu">
-      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:24}}>
-        <button onClick={()=>setView("list")} style={{background:"none",border:"none",color:C.inkMd,cursor:"pointer",fontSize:22}}>←</button>
-        <div className="cor" style={{fontSize:28,fontWeight:400}}>{type==="entrada"?"Registrar Entrada":"Registrar Saída"} — {title}</div>
-      </div>
-      <Card style={{maxWidth:480}}>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
-          {[["entrada","✅ Entrada"],["saida","📤 Saída"]].map(([val,lbl])=>(
-            <button key={val} onClick={()=>setType(val)} style={{padding:"11px",borderRadius:8,border:`1.5px solid ${type===val?(val==="entrada"?C.green:C.red):C.border}`,background:type===val?(val==="entrada"?C.greenLt:C.redLt):"transparent",color:type===val?(val==="entrada"?C.green:C.red):C.inkMd,cursor:"pointer",fontWeight:500,fontSize:13.5}}>{lbl}</button>
-          ))}
-        </div>
-        <Fld label="Produto" value={sP} onChange={v=>{setSP(v);setSSz("");}} required
-          options={[{value:"",label:"Selecione..."},...products.map(p=>({value:p.id,label:`${p.name} (${p.sku})`}))]}/>
-        {product&&<Fld label="Tamanho" value={sSz} onChange={setSSz} required
-          options={[{value:"",label:"Selecione..."},...product.sizes.map(s=>({value:s,label:`${s} — ${getQty(product.id,s)} em estoque`}))]}/>}
-        <Fld label="Quantidade" value={qty} onChange={v=>setQty(Number(v))} type="number" required/>
-        <Fld label="Observação" value={obs} onChange={setObs} placeholder="Opcional..."/>
-        <Btn onClick={handle} v={type==="entrada"?"success":"danger"} full sz="lg">
-          Confirmar {type==="entrada"?"Entrada":"Saída"}
-        </Btn>
-      </Card>
-    </div>
-  );
+  const filtered=[...products].sort((a,b)=>a.name.localeCompare(b.name))
+    .filter(p=>p.name.toLowerCase().includes(search.toLowerCase())||p.sku?.toLowerCase().includes(search.toLowerCase()));
 
   return(
     <div className="fu">
-      <PageHeader title={`Estoque — ${title}`} sub={`${stock.reduce((a,b)=>a+b.qty,0)} peças`}
-        actions={[
-          <Btn key="e" v="success" onClick={()=>{setType("entrada");setView("form");}}>+ Entrada</Btn>,
-          <Btn key="s" v="dangerO" onClick={()=>{setType("saida");setView("form");}}>− Saída</Btn>
-        ]}/>
-      <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar produto..."
-        style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,color:C.ink,padding:"9px 14px",fontSize:13.5,outline:"none",width:260,marginBottom:16}}/>
-      <div style={{display:"grid",gap:10}}>
-        {filtered.map(p=>{
-          const ps=stock.filter(s=>s.pId===p.id);const total=ps.reduce((a,b)=>a+b.qty,0);
-          return(
-            <Card key={p.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}>
-              <div style={{display:"flex",alignItems:"center",gap:12}}>
-                <Thumb p={p} size={44}/>
-                <div>
-                  <div style={{fontWeight:600,fontSize:14}}>{p.name}{p.promo&&<span style={{marginLeft:6,fontSize:10.5,color:C.red,background:C.redLt,padding:"1px 6px",borderRadius:8}}>Promo</span>}</div>
-                  <div style={{fontSize:12,color:C.inkLt}}>{p.sku} · {p.color}</div>
-                </div>
-              </div>
-              <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                {ps.map(s=>(
-                  <div key={s.sz} style={{textAlign:"center",background:C.hover,borderRadius:7,padding:"4px 10px",minWidth:46}}>
-                    <div style={{fontSize:9,color:C.inkFt,letterSpacing:.4}}>TAM {s.sz}</div>
-                    <div style={{fontWeight:700,color:s.qty<=3?C.red:C.ink,fontSize:16}}>{s.qty}</div>
-                    {s.qty<=3&&<div style={{fontSize:8,color:C.red}}>baixo</div>}
+      <PageHeader title={"Estoque — "+title} sub={stock.reduce((a,b)=>a+b.qty,0)+" peças total"}/>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 380px",gap:16,alignItems:"start"}}>
+
+        {/* LEFT — product list */}
+        <div>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar produto..."
+            style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,color:C.ink,padding:"9px 14px",fontSize:13.5,outline:"none",width:"100%",marginBottom:14,boxSizing:"border-box"}}/>
+          <div style={{display:"grid",gap:8}}>
+            {filtered.map(p=>{
+              const ps=stock.filter(s=>s.pId===p.id);
+              const total=ps.reduce((a,b)=>a+b.qty,0);
+              const sel=selProd?.id===p.id;
+              return(
+                <div key={p.id} onClick={()=>{setSelProd(p);setQtys({});}}
+                  style={{background:sel?C.goldLt:C.surface,border:`1.5px solid ${sel?C.gold:C.border}`,borderRadius:10,padding:"12px 16px",cursor:"pointer",transition:"all .12s"}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:sel?10:0}}>
+                    <div style={{display:"flex",alignItems:"center",gap:10}}>
+                      <Thumb p={p} size={38}/>
+                      <div>
+                        <div style={{fontWeight:600,fontSize:14}}>{p.name}</div>
+                        <div style={{fontSize:11.5,color:C.inkLt}}>{p.sku}{p.color?" · "+p.color:""}</div>
+                      </div>
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      <div className="cor" style={{fontSize:20,color:total<=5?C.red:C.gold,fontWeight:700}}>{total}</div>
+                      <div style={{fontSize:10,color:C.inkFt}}>peças</div>
+                    </div>
                   </div>
+                  {/* Size chips — always visible */}
+                  <div style={{display:"flex",flexWrap:"wrap",gap:5,marginTop:6}}>
+                    {ps.sort((a,b)=>a.sz.localeCompare(b.sz,undefined,{numeric:true})).map(s=>(
+                      <div key={s.sz} style={{textAlign:"center",background:s.qty<=3?"#FFF0F0":C.hover,border:`1px solid ${s.qty<=3?C.red:C.border}`,borderRadius:6,padding:"3px 9px",minWidth:44}}>
+                        <div style={{fontSize:9,color:C.inkFt,letterSpacing:.3}}>{s.sz}</div>
+                        <div style={{fontWeight:700,color:s.qty<=3?C.red:C.ink,fontSize:15}}>{s.qty}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* RIGHT — entry/exit panel */}
+        <div style={{position:"sticky",top:20}}>
+          {!selProd?(
+            <Card style={{textAlign:"center",padding:40,color:C.inkFt}}>
+              <div style={{fontSize:32,marginBottom:10}}>👆</div>
+              <div style={{fontSize:14}}>Selecione um produto ao lado para registrar entrada ou saída</div>
+            </Card>
+          ):(
+            <Card>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,padding:"10px 14px",background:C.hover,borderRadius:8}}>
+                <Thumb p={selProd} size={36}/>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:700,fontSize:14}}>{selProd.name}</div>
+                  <div style={{fontSize:11.5,color:C.inkLt}}>{selProd.sku}</div>
+                </div>
+                <button onClick={()=>{setSelProd(null);setQtys({});}} style={{background:"none",border:"none",cursor:"pointer",color:C.inkLt,fontSize:18}}>×</button>
+              </div>
+
+              {/* Entrada / Saída toggle */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
+                {[["entrada","✅ Entrada","green"],["saida","📤 Saída","red"]].map(([val,lbl,col])=>(
+                  <button key={val} onClick={()=>setType(val)} style={{padding:"10px",borderRadius:8,border:`1.5px solid ${type===val?C[col]:C.border}`,background:type===val?C[col+"Lt"]:"transparent",color:type===val?C[col]:C.inkMd,cursor:"pointer",fontWeight:600,fontSize:13.5}}>
+                    {lbl}
+                  </button>
                 ))}
-                <div style={{textAlign:"center",background:C.goldLt,borderRadius:7,padding:"4px 12px",minWidth:52,borderLeft:`2px solid ${C.gold}`}}>
-                  <div style={{fontSize:9,color:C.gold,letterSpacing:.4}}>TOTAL</div>
-                  <div className="cor" style={{fontWeight:700,color:C.gold,fontSize:20}}>{total}</div>
+              </div>
+
+              {/* Shopify-style variant table */}
+              <div style={{marginBottom:12}}>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 80px",gap:6,padding:"6px 8px",background:C.hover,borderRadius:6,marginBottom:6}}>
+                  <div style={{fontSize:10.5,fontWeight:700,color:C.inkLt,letterSpacing:.5}}>TAMANHO</div>
+                  <div style={{fontSize:10.5,fontWeight:700,color:C.inkLt,letterSpacing:.5}}>ATUAL</div>
+                  <div style={{fontSize:10.5,fontWeight:700,color:C.inkLt,letterSpacing:.5}}>{type==="entrada"?"ENTRADA":"SAÍDA"}</div>
+                </div>
+                {selProd.sizes?.map(sz=>{
+                  const cur=getQty(selProd.id,sz);
+                  const q=Number(qtys[sz]||0);
+                  const after=type==="entrada"?cur+q:cur-q;
+                  return(
+                    <div key={sz} style={{display:"grid",gridTemplateColumns:"1fr 1fr 80px",gap:6,alignItems:"center",padding:"5px 8px",borderBottom:`1px solid ${C.border}`}}>
+                      <div style={{fontWeight:700,fontSize:15,color:C.ink}}>{sz}</div>
+                      <div style={{fontSize:13,color:cur<=3?C.red:C.inkMd}}>
+                        {cur}
+                        {q>0&&<span style={{marginLeft:6,fontSize:11,color:type==="entrada"?C.green:C.red,fontWeight:600}}>→ {after}</span>}
+                      </div>
+                      <input type="number" min="0" value={qtys[sz]||""} placeholder="0"
+                        onChange={e=>setQtys(prev=>({...prev,[sz]:e.target.value}))}
+                        onFocus={e=>e.target.select()}
+                        style={{width:"100%",background:C.surface,border:`1px solid ${q>0?(type==="entrada"?C.green:C.red):C.border}`,borderRadius:5,color:C.ink,padding:"6px 8px",fontSize:14,fontWeight:q>0?700:400,outline:"none",textAlign:"center"}}/>
+                    </div>
+                  );
+                })}
+                <div style={{marginTop:8,padding:"6px 8px",background:C.hover,borderRadius:6,display:"flex",justifyContent:"space-between",fontSize:12.5,color:C.inkMd}}>
+                  <span>Total a {type==="entrada"?"entrar":"sair"}:</span>
+                  <strong style={{color:type==="entrada"?C.green:C.red}}>{Object.values(qtys).reduce((a,q)=>a+Number(q||0),0)} peças</strong>
                 </div>
               </div>
+
+              <Fld label="Observação (opcional)" value={obs} onChange={setObs} placeholder="Ex: NF 1234, fornecedor..."/>
+              <Btn onClick={handleSubmit} v={type==="entrada"?"success":"danger"} full sz="lg" disabled={saving}>
+                {saving?"Salvando...":(type==="entrada"?"✅ Confirmar Entrada":"📤 Confirmar Saída")}
+              </Btn>
             </Card>
-          );
-        })}
+          )}
+        </div>
       </div>
     </div>
   );
