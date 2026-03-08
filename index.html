@@ -966,7 +966,8 @@ function PDV({stkL,setStkL,products,clients,setClients,setSales,addMov,showToast
 // ── CLIENTS ────────────────────────────────────────────────────────────────
 function Clients({clients,setClients,sales,showToast,logActivity}){
   const [view,setView]=useState("list");
-  const [clientTab,setClientTab]=useState("varejo"); // varejo | atacado
+  const [clientTab,setClientTab]=useState("varejo");
+  const [sortMode,setSortMode]=useState("alpha"); // alpha | recent
   const [selId,setSelId]=useState(null);
   const [search,setSearch]=useState("");
   const [cnpjLoading,setCnpjLoading]=useState(false);
@@ -1042,8 +1043,19 @@ function Clients({clients,setClients,sales,showToast,logActivity}){
   const clientSales=sales.filter(s=>s.client_id===selId||s.clientId===selId);
   const totalSpent=clientSales.reduce((a,s)=>a+(s.total||0),0);
 
-  const cleanName=n=>(n||"").replace(/^[\d.\s]+/,"");
-  const sortedClients=[...clients].sort((a,b)=>cleanName(a.name).localeCompare(cleanName(b.name),"pt-BR"));
+  const cleanName=n=>(n||"").replace(/^[\d.\s]+/,"").trim();
+  const clientSales2={}; // last sale date per client
+  clients.forEach(c=>{
+    const last=sales.filter(s=>s.client_id===c.id||s.clientId===c.id).sort((a,b)=>new Date(b.date)-new Date(a.date))[0];
+    if(last)clientSales2[c.id]=last.date;
+  });
+  const sortFn=(a,b)=>{
+    if(sortMode==="alpha")return cleanName(a.name).localeCompare(cleanName(b.name),"pt-BR");
+    const da=clientSales2[a.id]||a.created_at||"";
+    const db=clientSales2[b.id]||b.created_at||"";
+    return db.localeCompare(da);
+  };
+  const sortedClients=[...clients].sort(sortFn);
   const varejo=sortedClients.filter(c=>c.type==="retail"||c.type!=="wholesale");
   const atacado=sortedClients.filter(c=>c.type==="wholesale");
   const listToShow=(clientTab==="varejo"?varejo:atacado).filter(c=>
@@ -1163,8 +1175,15 @@ function Clients({clients,setClients,sales,showToast,logActivity}){
       <PageHeader title="Clientes" sub={`${varejo.length} varejo · ${atacado.length} atacado`}
         actions={[<Btn key="new" onClick={()=>setView("new")}>+ Novo Cliente</Btn>]}/>
       <InlineTabs tabs={[{id:"varejo",label:`🛒 Varejo (${varejo.length})`},{id:"atacado",label:`🏢 Atacado (${atacado.length})`}]} active={clientTab} onChange={setClientTab}/>
-      <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar por nome, CPF/CNPJ ou telefone..."
-        style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,color:C.ink,padding:"9px 14px",fontSize:13.5,outline:"none",width:320,marginBottom:16}}/>
+      <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:16,flexWrap:"wrap"}}>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar por nome, CPF/CNPJ ou telefone..."
+          style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,color:C.ink,padding:"9px 14px",fontSize:13.5,outline:"none",flex:1,minWidth:220}}/>
+        <div style={{display:"flex",gap:6}}>
+          {[["alpha","🔤 A–Z"],["recent","🕐 Recentes"]].map(([m,l])=>(
+            <button key={m} onClick={()=>setSortMode(m)} style={{padding:"8px 14px",borderRadius:7,border:`1.5px solid ${sortMode===m?C.gold:C.border}`,background:sortMode===m?C.goldLt:"transparent",color:sortMode===m?C.gold:C.inkMd,cursor:"pointer",fontSize:13,fontWeight:sortMode===m?600:400,whiteSpace:"nowrap"}}>{l}</button>
+          ))}
+        </div>
+      </div>
       {listToShow.length===0&&<Card style={{textAlign:"center",color:C.inkFt,padding:36}}>Nenhum cliente nesta categoria.</Card>}
       <div style={{display:"grid",gap:8}}>
         {listToShow.map(c=>(
@@ -1205,11 +1224,20 @@ function Products({products,setProducts,setStkG,setStkL,sales,showToast,logActiv
   const setF=(k,v)=>setForm(f=>({...f,[k]:v}));
 
   const genSKU=(name,cat)=>{
-    const prefix=(name||cat||"OUT").replace(/\s+/g,"").toUpperCase().slice(0,3);
+    // Build prefix from first letter of each word (max 3 letters)
+    const src=name||cat||"OUT";
+    const words=src.trim().split(/\s+/).filter(Boolean);
+    let prefix;
+    if(words.length>=2){
+      prefix=words.slice(0,3).map(w=>w[0].toUpperCase()).join("");
+    }else{
+      prefix=src.replace(/\s+/g,"").toUpperCase().slice(0,3);
+    }
+    prefix=prefix.slice(0,3);
     const existing=products.filter(p=>p.sku&&p.sku.startsWith(prefix+"-"));
     const nums=existing.map(p=>parseInt((p.sku||"").split("-")[1])||0);
     const next=(nums.length?Math.max(...nums):0)+1;
-    return `${prefix}-${String(next).padStart(3,"0")}`;
+    return prefix+"-"+String(next).padStart(3,"0");
   };
 
   const startNew=(cat)=>{
@@ -1247,8 +1275,9 @@ function Products({products,setProducts,setStkG,setStkL,sales,showToast,logActiv
       const sizes=variants.map(v=>v.sz);
       const sku=form.sku||genSKU(form.name,form.cat);
       // Use first variant price as default product price
-      const retail=Number(variants[0]?.retailPrice)||0;
-      const wholesale=Number(variants[0]?.wholesalePrice)||0;
+      const parsePR=v=>parseFloat(String(v||"0").replace(",","."))||0;
+      const retail=parsePR(variants[0]?.retailPrice);
+      const wholesale=parsePR(variants[0]?.wholesalePrice);
       const row={sku,name:form.name.trim(),cat:form.cat,color:form.color,sizes,
         retail_price:retail,wholesale_price:wholesale,cost_price:0,image_url:"",promo:false};
       const{data,error}=await sb.from("products").insert(row).select().single();
@@ -1277,6 +1306,36 @@ function Products({products,setProducts,setStkG,setStkL,sales,showToast,logActiv
     setVariants(vs);
     setView("new");
     showToast("Produto duplicado — ajuste e salve.","info");
+  };
+
+  const startEdit=(p)=>{
+    setForm({name:p.name,sku:p.sku,cat:p.cat,color:p.color||"",sizes:p.sizes||[]});
+    const vs=(p.sizes||[]).map(sz=>({sz,retailPrice:String(p.retailPrice||""),wholesalePrice:String(p.wholesalePrice||""),qty:0}));
+    setVariants(vs);
+    setSelId(p.id);
+    setView("edit");
+  };
+
+  const saveEdit=async()=>{
+    if(!form.name.trim()){showToast("Nome obrigatório","error");return;}
+    if(variants.length===0){showToast("Adicione ao menos um tamanho","error");return;}
+    setSaving(true);
+    try{
+      const parsePR=v=>parseFloat(String(v||"0").replace(",","."))||0;
+      const sizes=variants.map(v=>v.sz);
+      const retail=parsePR(variants[0]?.retailPrice);
+      const wholesale=parsePR(variants[0]?.wholesalePrice);
+      const row={name:form.name.trim(),cat:form.cat,color:form.color,sizes,
+        retail_price:retail,wholesale_price:wholesale};
+      const{error}=await sb.from("products").update(row).eq("id",selId);
+      if(error){showToast("Erro: "+error.message,"error");setSaving(false);return;}
+      setProducts(prev=>prev.map(p=>p.id===selId?{...p,...row,retailPrice:retail,wholesalePrice:wholesale}:p));
+      // (stock variants managed separately in Estoque tab)
+      await logActivity("produto_editado",`${form.sku} — ${form.name}`);
+      showToast("Produto atualizado!");
+      setView("detail");setForm(blank);setVariants([]);
+    }catch(e){showToast("Erro: "+e.message,"error");console.error(e);}
+    setSaving(false);
   };
 
   const selProd=products.find(p=>p.id===selId);
@@ -1313,7 +1372,7 @@ function Products({products,setProducts,setStkG,setStkL,sales,showToast,logActiv
   if(view==="new"||view==="edit")return(
     <div className="fu">
       <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:24}}>
-        <button onClick={()=>view==="new"?setView("pickCat"):setView("list")} style={{background:"none",border:"none",color:C.inkMd,cursor:"pointer",fontSize:22}}>←</button>
+        <button onClick={()=>view==="new"?setView("pickCat"):setView("detail")} style={{background:"none",border:"none",color:C.inkMd,cursor:"pointer",fontSize:22}}>←</button>
         <div>
           <div className="cor" style={{fontSize:28,fontWeight:400}}>{view==="edit"?"Editar Produto":"Novo Produto"}</div>
           {form.cat&&<div style={{fontSize:12,color:C.inkLt,marginTop:2}}>{CAT_ICON[form.cat]} {form.cat}</div>}
@@ -1341,11 +1400,13 @@ function Products({products,setProducts,setStkG,setStkL,sales,showToast,logActiv
               <div style={{display:"flex",gap:6}}>
                 <button onClick={()=>{
                   const szs=SIZES_NUM.split(",");
-                  setVariants(szs.map(sz=>({sz,retailPrice:variants[0]?.retailPrice||"",wholesalePrice:variants[0]?.wholesalePrice||"",qty:0})));
+                  const r=variants[0]?.retailPrice||"";const w=variants[0]?.wholesalePrice||"";
+                  setVariants(szs.map(sz=>({sz,retailPrice:r,wholesalePrice:w,qty:0})));
                 }} style={{padding:"4px 10px",borderRadius:5,border:`1px solid ${C.border}`,background:C.hover,cursor:"pointer",fontSize:11.5,color:C.inkMd}}>34-52</button>
                 <button onClick={()=>{
                   const szs=SIZES_LET.split(",");
-                  setVariants(szs.map(sz=>({sz,retailPrice:variants[0]?.retailPrice||"",wholesalePrice:variants[0]?.wholesalePrice||"",qty:0})));
+                  const r=variants[0]?.retailPrice||"";const w=variants[0]?.wholesalePrice||"";
+                  setVariants(szs.map(sz=>({sz,retailPrice:r,wholesalePrice:w,qty:0})));
                 }} style={{padding:"4px 10px",borderRadius:5,border:`1px solid ${C.border}`,background:C.hover,cursor:"pointer",fontSize:11.5,color:C.inkMd}}>PP-XGG</button>
                 <button onClick={()=>{
                   const sz=prompt("Tamanho:");
@@ -1369,11 +1430,11 @@ function Products({products,setProducts,setStkG,setStkL,sales,showToast,logActiv
                   <div style={{fontSize:10.5,color:C.inkLt,fontWeight:700,letterSpacing:.5}}>TAMANHO</div>
                   <div style={{display:"flex",alignItems:"center",gap:6}}>
                     <span style={{fontSize:10.5,color:C.inkLt,fontWeight:700,letterSpacing:.5}}>VAREJO R$</span>
-                    <button title="Aplicar a todos" onClick={()=>{const v=prompt("Preço varejo para todos:");if(v)applyPriceToAll("retailPrice",v);}} style={{fontSize:10,background:"none",border:"none",cursor:"pointer",color:C.gold}}>↓ todos</button>
+                    <button title="Aplicar a todos" onClick={()=>{const v=prompt("Preço varejo para todos (ex: 164,40):");if(v!=null){const n=parseFloat(v.replace(",","."));if(!isNaN(n))applyPriceToAll("retailPrice",n.toFixed(2));}}} style={{fontSize:10,background:"none",border:"none",cursor:"pointer",color:C.gold}}>↓ todos</button>
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:6}}>
                     <span style={{fontSize:10.5,color:C.inkLt,fontWeight:700,letterSpacing:.5}}>ATACADO R$</span>
-                    <button title="Aplicar a todos" onClick={()=>{const v=prompt("Preço atacado para todos:");if(v)applyPriceToAll("wholesalePrice",v);}} style={{fontSize:10,background:"none",border:"none",cursor:"pointer",color:C.purple}}>↓ todos</button>
+                    <button title="Aplicar a todos" onClick={()=>{const v=prompt("Preço atacado para todos (ex: 120,00):");if(v!=null){const n=parseFloat(v.replace(",","."));if(!isNaN(n))applyPriceToAll("wholesalePrice",n.toFixed(2));}}} style={{fontSize:10,background:"none",border:"none",cursor:"pointer",color:C.purple}}>↓ todos</button>
                   </div>
                   <div style={{fontSize:10.5,color:C.inkLt,fontWeight:700,letterSpacing:.5}}>GALPÃO</div>
                   <div/>
@@ -1382,9 +1443,11 @@ function Products({products,setProducts,setStkG,setStkL,sales,showToast,logActiv
                 {variants.map((v,i)=>(
                   <div key={v.sz} style={{display:"grid",gridTemplateColumns:"80px 1fr 1fr 90px 32px",gap:8,alignItems:"center",padding:"4px 10px",borderBottom:`1px solid ${C.border}`}}>
                     <div style={{fontWeight:600,fontSize:14,color:C.ink}}>{v.sz}</div>
-                    <input type="number" value={v.retailPrice} onChange={e=>setVariant(v.sz,"retailPrice",e.target.value)}
+                    <input type="text" inputMode="decimal" value={v.retailPrice} onChange={e=>setVariant(v.sz,"retailPrice",e.target.value)}
+                      onBlur={e=>{const n=parseFloat(e.target.value.replace(",","."));if(!isNaN(n))setVariant(v.sz,"retailPrice",n.toFixed(2));}}
                       placeholder="0,00" style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:5,color:C.ink,padding:"7px 9px",fontSize:13.5,outline:"none"}}/>
-                    <input type="number" value={v.wholesalePrice} onChange={e=>setVariant(v.sz,"wholesalePrice",e.target.value)}
+                    <input type="text" inputMode="decimal" value={v.wholesalePrice} onChange={e=>setVariant(v.sz,"wholesalePrice",e.target.value)}
+                      onBlur={e=>{const n=parseFloat(e.target.value.replace(",","."));if(!isNaN(n))setVariant(v.sz,"wholesalePrice",n.toFixed(2));}}
                       placeholder="0,00" style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:5,color:C.purple,padding:"7px 9px",fontSize:13.5,outline:"none"}}/>
                     <input type="number" value={v.qty} onChange={e=>setVariant(v.sz,"qty",e.target.value)}
                       placeholder="0" style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:5,color:C.ink,padding:"7px 9px",fontSize:13.5,outline:"none"}}/>
@@ -1413,8 +1476,8 @@ function Products({products,setProducts,setStkG,setStkL,sales,showToast,logActiv
               <div><strong>Tamanhos:</strong> {variants.length>0?variants.map(v=>v.sz).join(", "):"—"}</div>
             </div>
           </Card>
-          <Btn onClick={save} full sz="lg" disabled={saving} v="success">
-            {saving?"Salvando...":"✅ Cadastrar Produto"}
+          <Btn onClick={view==="edit"?saveEdit:save} full sz="lg" disabled={saving} v="success">
+            {saving?"Salvando...":(view==="edit"?"💾 Salvar Alterações":"✅ Cadastrar Produto")}
           </Btn>
         </div>
       </div>
@@ -1431,6 +1494,7 @@ function Products({products,setProducts,setStkG,setStkL,sales,showToast,logActiv
           <div style={{fontSize:12,color:C.inkLt}}>{selProd.sku} · {selProd.color} · {CAT_ICON[selProd.cat]} {selProd.cat}</div>
         </div>
         <Btn v="ghost" sz="sm" onClick={()=>duplicate(selProd)}>⧉ Duplicar</Btn>
+        <Btn v="gold" sz="sm" onClick={()=>startEdit(selProd)}>✏️ Editar</Btn>
       </div>
       <InlineTabs tabs={[{id:"dados",label:"Dados"},{id:"historico_vendas",label:"Histórico de Vendas"},{id:"historico_compras",label:"Compras"}]} active={activeTab} onChange={setActiveTab}/>
       {activeTab==="dados"&&(
