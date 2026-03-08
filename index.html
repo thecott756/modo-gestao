@@ -639,9 +639,9 @@ function PDV({stkL,setStkL,products,clients,setClients,setSales,addMov,showToast
           <div style={{display:"grid",gap:8,maxHeight:340,overflowY:"auto"}}>
             {filteredClients.map(c=>(
               <button key={c.id} onClick={()=>{setSelClient(c);setStep("sale");}} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderRadius:10,border:`1.5px solid ${C.border}`,background:C.surface,cursor:"pointer",textAlign:"left",width:"100%"}}>
-                <div style={{width:38,height:38,borderRadius:"50%",background:C.goldLt,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,color:C.gold,fontSize:15,flexShrink:0}}>{c.name[0]}</div>
+                <div style={{width:38,height:38,borderRadius:"50%",background:C.goldLt,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,color:C.gold,fontSize:15,flexShrink:0}}>{(c.name.replace(/^[\d.\s]+/,""))[0]}</div>
                 <div style={{flex:1}}>
-                  <div style={{fontWeight:500,fontSize:13.5}}>{c.name}</div>
+                  <div style={{fontWeight:500,fontSize:13.5}}>{c.name.replace(/^[\d.\s]+/,"")}</div>
                   <div style={{fontSize:12,color:C.inkLt}}>{c.phone}{c.type==="wholesale"?" · Atacado":""}</div>
                 </div>
                 {c.type==="wholesale"&&<Badge color={C.purple}>Atacado</Badge>}
@@ -678,79 +678,178 @@ function PDV({stkL,setStkL,products,clients,setClients,setSales,addMov,showToast
   );
 
   // ── STEP 2 — SALE ──
+  // Product picker state
+  const [pickerProd,setPickerProd]=useState(null); // selected product in picker
+  const [pickerSz,setPickerSz]=useState(null);     // selected size
+  const [pickerQty,setPickerQty]=useState(1);
+  const [prodSearch,setProdSearch]=useState("");
+
+  const filteredProds=products.filter(p=>
+    p.name.toLowerCase().includes(prodSearch.toLowerCase())||
+    (p.sku||"").toLowerCase().includes(prodSearch.toLowerCase())
+  );
+
+  const confirmPickerAdd=()=>{
+    if(!pickerProd||!pickerSz)return;
+    const av=getStk(pickerProd.id,pickerSz);
+    if(av<1){showToast("Sem estoque","error");return;}
+    const qty=Math.min(pickerQty,av);
+    const idx=cart.findIndex(c=>c.pId===pickerProd.id&&c.sz===pickerSz);
+    if(idx>=0){
+      setCart(prev=>prev.map((c,i)=>i===idx?{...c,qty:Math.min(c.qty+qty,av)}:c));
+    }else{
+      setCart(prev=>[...prev,{pId:pickerProd.id,name:pickerProd.name,sz:pickerSz,price:getPrice(pickerProd),qty,cat:pickerProd.cat,sku:pickerProd.sku}]);
+    }
+    showToast(pickerProd.name+" ("+pickerSz+") ×"+qty+" adicionado");
+    setPickerProd(null);setPickerSz(null);setPickerQty(1);
+  };
+
   return(
     <div className="fu">
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:10}}>
+      {/* Header */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:10}}>
         <div>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <div className="cor" style={{fontSize:30,fontWeight:400}}>Realizando Venda</div>
+            <div className="cor" style={{fontSize:28,fontWeight:400}}>Nova Venda</div>
             <Badge color={saleMode==="online"?C.blue:C.green}>{saleMode==="online"?"📦 Online":"🏪 Balcão"}</Badge>
           </div>
-          <div style={{fontSize:13,color:C.inkLt,marginTop:3,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-            {selClient?<><span style={{fontWeight:600,color:C.ink}}>{selClient.name}</span>
-              {isWholesale&&<Badge color={C.purple}>Atacado</Badge>}</>
-              :<span>Venda avulsa</span>}
+          <div style={{fontSize:13,color:C.inkLt,marginTop:2}}>
+            {selClient
+              ?<><strong style={{color:C.ink}}>{selClient.name.replace(/^[\d.\s]+/,"")}</strong>{isWholesale&&<span style={{marginLeft:8,color:C.purple,fontWeight:600}}>· Atacado</span>}</>
+              :"Venda avulsa"}
           </div>
         </div>
         <Btn v="ghost" sz="sm" onClick={resetSale}>← Trocar cliente</Btn>
       </div>
 
       <div style={{display:"grid",gridTemplateColumns:"1fr 300px",gap:16,alignItems:"start"}}>
-        {/* LEFT */}
+
+        {/* ── LEFT: PRODUCT PICKER + CART ── */}
         <div style={{display:"flex",flexDirection:"column",gap:12}}>
+
+          {/* Barcode (hidden input, auto-triggered by scanner) */}
+          <input value={barcodeInput} onChange={e=>setBarcodeInput(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&addByBarcode()}
+            style={{position:"absolute",opacity:0,pointerEvents:"none",width:1,height:1}}
+            aria-hidden="true"/>
+
+          {/* Product picker */}
           <Card>
-            <SectionTitle>Leitor de Código de Barras</SectionTitle>
-            <div style={{display:"flex",gap:8}}>
-              <input value={barcodeInput} onChange={e=>setBarcodeInput(e.target.value)}
-                onKeyDown={e=>e.key==="Enter"&&addByBarcode()}
-                placeholder="Aponte o leitor ou: SKU|Tamanho (ex: CAM-001|M)"
-                style={{flex:1,background:C.hover,border:`1px solid ${C.border}`,borderRadius:6,color:C.ink,padding:"9px 12px",fontSize:13.5,outline:"none"}}/>
-              <Btn onClick={addByBarcode} v="ghost">Buscar</Btn>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+              <SectionTitle style={{marginBottom:0}}>Produtos</SectionTitle>
+              <input value={prodSearch} onChange={e=>setProdSearch(e.target.value)}
+                placeholder="Buscar..." autoFocus
+                style={{background:C.hover,border:`1px solid ${C.border}`,borderRadius:6,color:C.ink,padding:"6px 11px",fontSize:13,outline:"none",width:160}}/>
             </div>
-          </Card>
-          <Card>
-            <SectionTitle>Adicionar Manualmente</SectionTitle>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:10,alignItems:"end"}}>
-              <Fld label="Produto" value={selProd} onChange={v=>{setSelProd(v);setSelSz("");}} style={{marginBottom:0}}
-                options={[{value:"",label:"Selecione..."},...products.map(p=>({value:p.id,label:p.name}))]}/>
-              {prod?<Fld label="Tamanho" value={selSz} onChange={setSelSz} style={{marginBottom:0}}
-                  options={[{value:"",label:"Tam..."},...prod.sizes.map(s=>({value:s,label:`${s} (${getStk(prod.id,s)})`}))]}/>:<div/>}
-              <button onClick={addItem} style={{background:C.accent,color:"#fff",border:"none",padding:"9px 16px",borderRadius:6,cursor:"pointer",fontWeight:600,fontSize:13.5,whiteSpace:"nowrap"}}>+ Add</button>
-            </div>
-          </Card>
-          <Card>
-            <SectionTitle>Carrinho</SectionTitle>
-            {cart.length===0
-              ?<div style={{textAlign:"center",padding:"28px 0",color:C.inkFt,fontSize:13}}>Nenhum item adicionado.</div>
-              :cart.map((item,i)=>(
-                <div key={i} style={{display:"flex",alignItems:"center",gap:11,padding:"10px 0",borderBottom:`1px solid ${C.border}`}}>
-                  <Thumb p={{cat:item.cat}} size={38}/>
+
+            {/* Product grid */}
+            {!pickerProd&&(
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))",gap:8,maxHeight:320,overflowY:"auto"}}>
+                {filteredProds.map(p=>{
+                  const totalStk=p.sizes?.reduce((a,sz)=>a+getStk(p.id,sz),0)||0;
+                  const cc=CAT_COLOR[p.cat]||"#C8C0B4";
+                  return(
+                    <button key={p.id} onClick={()=>{setPickerProd(p);setPickerSz(null);setPickerQty(1);}}
+                      style={{padding:"12px 10px",borderRadius:10,border:`1.5px solid ${C.border}`,background:C.surface,cursor:totalStk>0?"pointer":"not-allowed",textAlign:"center",opacity:totalStk>0?1:.45,transition:"all .12s",position:"relative"}}
+                      onMouseEnter={e=>{if(totalStk>0)e.currentTarget.style.borderColor=cc;}}
+                      onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}
+                      disabled={totalStk===0}>
+                      <div style={{fontSize:26,marginBottom:5}}>{CAT_ICON[p.cat]||"👕"}</div>
+                      <div style={{fontSize:12,fontWeight:600,lineHeight:1.3,marginBottom:4}}>{p.name}</div>
+                      <div style={{fontSize:10.5,color:C.inkLt}}>{p.sku}</div>
+                      <div style={{fontSize:11,color:totalStk>3?C.green:C.red,fontWeight:600,marginTop:3}}>{totalStk} peças</div>
+                    </button>
+                  );
+                })}
+                {filteredProds.length===0&&<div style={{gridColumn:"1/-1",textAlign:"center",padding:24,color:C.inkFt,fontSize:13}}>Nenhum produto encontrado.</div>}
+              </div>
+            )}
+
+            {/* Size picker — shown after product selected */}
+            {pickerProd&&(
+              <div>
+                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,padding:"10px 14px",background:C.hover,borderRadius:8}}>
+                  <span style={{fontSize:22}}>{CAT_ICON[pickerProd.cat]||"👕"}</span>
                   <div style={{flex:1}}>
-                    <div style={{fontWeight:500,fontSize:13.5}}>{item.name} — {item.sz}</div>
-                    <div style={{fontSize:12,color:C.inkLt}}>{fmt(item.price)}{isWholesale&&<span style={{marginLeft:6,color:C.purple}}>Atacado</span>}</div>
+                    <div style={{fontWeight:700,fontSize:14}}>{pickerProd.name}</div>
+                    <div style={{fontSize:12,color:C.inkLt}}>{fmt(getPrice(pickerProd))}</div>
                   </div>
-                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  <button onClick={()=>{setPickerProd(null);setPickerSz(null);}} style={{background:"none",border:"none",cursor:"pointer",color:C.inkLt,fontSize:18}}>←</button>
+                </div>
+
+                <div style={{fontSize:11,fontWeight:700,color:C.inkMd,letterSpacing:.6,marginBottom:8,textTransform:"uppercase"}}>Selecione o tamanho</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:16}}>
+                  {pickerProd.sizes?.map(sz=>{
+                    const stk=getStk(pickerProd.id,sz);
+                    const sel=pickerSz===sz;
+                    return(
+                      <button key={sz} onClick={()=>{if(stk>0){setPickerSz(sz);setPickerQty(1);}}}
+                        style={{padding:"12px 18px",borderRadius:9,border:`2px solid ${sel?C.gold:stk>0?C.border:"#ddd"}`,
+                          background:sel?C.goldLt:stk>0?C.surface:"#f9f9f9",
+                          color:sel?C.gold:stk>0?C.ink:C.inkFt,
+                          cursor:stk>0?"pointer":"not-allowed",
+                          fontWeight:sel?700:500,fontSize:16,minWidth:56,textAlign:"center",
+                          opacity:stk>0?1:.4,transition:"all .1s",position:"relative"}}>
+                        {sz}
+                        <div style={{fontSize:9,color:sel?C.gold:stk>2?C.green:C.red,marginTop:2,fontWeight:600}}>{stk} un</div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {pickerSz&&(
+                  <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",background:C.goldLt,borderRadius:9,border:`1.5px solid ${C.gold}`}}>
+                    <div style={{flex:1,fontSize:14}}>
+                      <strong>{pickerProd.name}</strong> — Tam <strong>{pickerSz}</strong>
+                      <div style={{fontSize:12,color:C.inkMd,marginTop:2}}>{fmt(getPrice(pickerProd))} × {pickerQty} = <strong style={{color:C.green}}>{fmt(getPrice(pickerProd)*pickerQty)}</strong></div>
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <button onClick={()=>setPickerQty(q=>Math.max(1,q-1))} style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.border}`,background:"#fff",cursor:"pointer",fontSize:18,fontWeight:700}}>−</button>
+                      <input type="number" value={pickerQty} min={1} max={getStk(pickerProd.id,pickerSz)}
+                        onChange={e=>setPickerQty(Math.max(1,Math.min(Number(e.target.value),getStk(pickerProd.id,pickerSz))))}
+                        onKeyDown={e=>e.key==="Enter"&&confirmPickerAdd()}
+                        style={{width:48,textAlign:"center",border:`1px solid ${C.border}`,borderRadius:6,padding:"6px",fontSize:16,fontWeight:700,outline:"none"}}/>
+                      <button onClick={()=>setPickerQty(q=>Math.min(q+1,getStk(pickerProd.id,pickerSz)))} style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.border}`,background:"#fff",cursor:"pointer",fontSize:18,fontWeight:700}}>+</button>
+                    </div>
+                    <Btn v="success" onClick={confirmPickerAdd}>✓ Add</Btn>
+                  </div>
+                )}
+              </div>
+            )}
+          </Card>
+
+          {/* Cart */}
+          <Card>
+            <SectionTitle>Carrinho {cart.length>0&&<Badge color={C.green}>{cart.reduce((a,b)=>a+b.qty,0)} itens</Badge>}</SectionTitle>
+            {cart.length===0
+              ?<div style={{textAlign:"center",padding:"20px 0",color:C.inkFt,fontSize:13}}>Nenhum item adicionado.</div>
+              :cart.map((item,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",gap:11,padding:"9px 0",borderBottom:`1px solid ${C.border}`}}>
+                  <Thumb p={{cat:item.cat}} size={36}/>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:500,fontSize:13.5}}>{item.name}</div>
+                    <div style={{fontSize:12,color:C.inkLt}}>Tam: {item.sz} · {fmt(item.price)}{isWholesale&&<span style={{color:C.purple}}> · Atacado</span>}</div>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:5}}>
                     <button onClick={()=>setCart(p=>p.map((c,j)=>j===i&&c.qty>1?{...c,qty:c.qty-1}:c))} style={{width:26,height:26,borderRadius:5,border:`1px solid ${C.border}`,background:C.hover,cursor:"pointer",fontSize:15}}>−</button>
-                    <span style={{fontWeight:700,minWidth:20,textAlign:"center"}}>{item.qty}</span>
+                    <span style={{fontWeight:700,minWidth:22,textAlign:"center"}}>{item.qty}</span>
                     <button onClick={()=>setCart(p=>p.map((c,j)=>j===i?{...c,qty:c.qty+1}:c))} style={{width:26,height:26,borderRadius:5,border:`1px solid ${C.border}`,background:C.hover,cursor:"pointer",fontSize:15}}>+</button>
-                    <span style={{color:C.green,fontWeight:600,fontSize:13.5,minWidth:68,textAlign:"right"}}>{fmt(item.price*item.qty)}</span>
+                    <span style={{color:C.green,fontWeight:600,fontSize:13.5,minWidth:72,textAlign:"right"}}>{fmt(item.price*item.qty)}</span>
                     <button onClick={()=>setCart(p=>p.filter((_,j)=>j!==i))} style={{background:C.redLt,border:"none",color:C.red,width:24,height:24,borderRadius:5,cursor:"pointer",fontSize:13}}>×</button>
                   </div>
                 </div>
               ))
             }
-            {cart.length>0&&<div style={{display:"flex",justifyContent:"flex-end",paddingTop:14}}>
+            {cart.length>0&&<div style={{display:"flex",justifyContent:"flex-end",paddingTop:12}}>
               <div className="cor" style={{fontSize:22}}>Subtotal: <span style={{color:C.green}}>{fmt(subtotal)}</span></div>
             </div>}
           </Card>
         </div>
 
-        {/* RIGHT */}
+        {/* ── RIGHT: PAYMENT ── */}
         <div style={{display:"flex",flexDirection:"column",gap:10}}>
-          {/* wholesale info */}
-          {isWholesale&&<div style={{background:C.purpleLt,borderRadius:8,padding:"10px 14px",fontSize:13,color:C.purple,fontWeight:500}}>✅ Preço atacado aplicado automaticamente.</div>}
+          {isWholesale&&<div style={{background:C.purpleLt,borderRadius:8,padding:"10px 14px",fontSize:13,color:C.purple,fontWeight:500}}>✅ Preço atacado aplicado.</div>}
 
-          {/* promo code */}
           {!isWholesale&&(
             <Card>
               <SectionTitle>Código Promocional</SectionTitle>
@@ -769,12 +868,11 @@ function PDV({stkL,setStkL,products,clients,setClients,setSales,addMov,showToast
                   </div>
               }
               {(payMethod==="dinheiro"||payMethod==="pix")&&!appliedPromo&&(
-                <div style={{marginTop:8,fontSize:11.5,color:C.gold}}>💡 Pagamento à vista recebe 10% de desconto automático.</div>
+                <div style={{marginTop:8,fontSize:11.5,color:C.gold}}>💡 À vista = 10% de desconto automático.</div>
               )}
             </Card>
           )}
 
-          {/* freight — only online */}
           {saleMode==="online"&&(
             <Card>
               <SectionTitle>Frete</SectionTitle>
@@ -792,7 +890,6 @@ function PDV({stkL,setStkL,products,clients,setClients,setSales,addMov,showToast
             </Card>
           )}
 
-          {/* payment */}
           <Card>
             <SectionTitle>Pagamento</SectionTitle>
             {[{id:"dinheiro",l:"💵 Dinheiro"},{id:"pix",l:"⚡ PIX"},{id:"cartao",l:"💳 Cartão"},{id:"boleto",l:"📄 Boleto"}].map(o=>(
@@ -800,38 +897,37 @@ function PDV({stkL,setStkL,products,clients,setClients,setSales,addMov,showToast
             ))}
             {payMethod==="dinheiro"&&(
               <div style={{marginTop:4}}>
-                <Fld label="Valor recebido" value={paid} onChange={v=>setPaid(Number(v))} type="number"/>
+                <Fld label="Valor recebido (R$)" value={paid} onChange={v=>setPaid(Number(v))} type="number"/>
                 {paid>0&&<div style={{padding:"8px 12px",background:C.greenLt,borderRadius:6,color:C.green,fontWeight:600,fontSize:13}}>Troco: {fmt(change)}</div>}
               </div>
             )}
           </Card>
 
-          {/* total */}
           <Card>
-            <div style={{fontSize:12.5,color:C.inkMd,marginBottom:6,display:"flex",justifyContent:"space-between"}}><span>Subtotal</span><span>{fmt(subtotal)}</span></div>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,color:C.inkMd,marginBottom:5}}><span>Subtotal</span><span>{fmt(subtotal)}</span></div>
             {extraDisc>0&&<div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,color:C.red,marginBottom:4}}>
-              <span>{appliedPromo?appliedPromo.label:`À vista ${extraDisc}%`}</span><span>− {fmt(discAmt)}</span>
+              <span>{appliedPromo?appliedPromo.label:"À vista "+extraDisc+"%"}</span><span>− {fmt(discAmt)}</span>
             </div>}
             {freightPrice>0&&<div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,color:C.blue,marginBottom:4}}><span>Frete</span><span>{fmt(freightPrice)}</span></div>}
             <HR m="8px 0 12px"/>
-            <div className="cor" style={{fontSize:32,textAlign:"center",marginBottom:12}}><span style={{color:C.green}}>{fmt(total)}</span></div>
-            <Btn v="success" onClick={finalize} full sz="lg" disabled={saving}>{saving?"Salvando...":"✅ Finalizar Venda"}</Btn>
+            <div className="cor" style={{fontSize:34,textAlign:"center",marginBottom:14}}><span style={{color:C.green}}>{fmt(total)}</span></div>
+            <Btn v="success" onClick={finalize} full sz="lg" disabled={saving||cart.length===0}>{saving?"Salvando...":"✅ Finalizar Venda"}</Btn>
           </Card>
         </div>
       </div>
 
       {/* RECEIPT */}
       {receipt&&(
-        <div className="fu" style={{position:"fixed",top:0,left:0,width:"100vw",height:"100vh",background:"rgba(26,23,20,.6)",backdropFilter:"blur(4px)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",paddingLeft:"200px"}}>
-          <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,width:"90%",maxWidth:500,maxHeight:"90vh",overflowY:"auto",padding:28,boxShadow:"0 24px 80px rgba(0,0,0,.2)"}}>
+        <div style={{position:"fixed",top:0,left:0,width:"100vw",height:"100vh",background:"rgba(26,23,20,.65)",backdropFilter:"blur(4px)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",paddingLeft:"200px"}}>
+          <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,width:"90%",maxWidth:480,maxHeight:"90vh",overflowY:"auto",padding:28,boxShadow:"0 24px 80px rgba(0,0,0,.25)"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-              <div className="cor" style={{fontSize:20}}>Comprovante de Venda</div>
-              <button onClick={()=>setReceipt(null)} style={{background:"none",border:"none",color:C.inkFt,fontSize:28,cursor:"pointer"}}>×</button>
+              <div className="cor" style={{fontSize:20}}>✅ Venda Concluída</div>
+              <button onClick={()=>{setReceipt(null);resetSale();}} style={{background:"none",border:"none",color:C.inkFt,fontSize:28,cursor:"pointer"}}>×</button>
             </div>
-            <div style={{background:C.hover,borderRadius:10,padding:18,marginBottom:16,fontFamily:"'Courier New',monospace",fontSize:12.5,lineHeight:2}}>
-              <div className="cor" style={{textAlign:"center",fontSize:18,marginBottom:4}}>✦ MODO — Comprovante ✦</div>
+            <div style={{background:C.hover,borderRadius:10,padding:18,marginBottom:16,fontFamily:"monospace",fontSize:12.5,lineHeight:2}}>
+              <div className="cor" style={{textAlign:"center",fontSize:20,marginBottom:2}}>✦ THE COTT ✦</div>
               <div style={{textAlign:"center",fontSize:11,color:C.inkLt,marginBottom:10}}>{fmtD(receipt.date)}</div>
-              <div>Cliente: {receipt.clientName}</div>
+              <div>Cliente: {(receipt.clientName||"Avulso").replace(/^[\d.\s]+/,"")}</div>
               <div>Vendedor: {receipt.seller}</div>
               {receipt.isWholesale&&<div>Tipo: ATACADO</div>}
               {receipt.sale_mode==="online"&&<div>Modalidade: ONLINE/ENTREGA</div>}
@@ -844,29 +940,29 @@ function PDV({stkL,setStkL,products,clients,setClients,setSales,addMov,showToast
               ))}
               <HR/>
               {receipt.discountAmt>0&&<div style={{display:"flex",justifyContent:"space-between",color:C.red}}>
-                <span>{receipt.promo_code?`Cupom ${receipt.promo_code}`:`Desconto ${receipt.discountPct}%`}</span>
+                <span>{receipt.promo_code?"Cupom "+receipt.promo_code:"Desconto "+receipt.discountPct+"%"}</span>
                 <span>-{fmt(receipt.discountAmt)}</span>
               </div>}
               {receipt.freightPrice>0&&<div style={{display:"flex",justifyContent:"space-between",color:C.blue}}><span>Frete</span><span>{fmt(receipt.freightPrice)}</span></div>}
               <div style={{display:"flex",justifyContent:"space-between",fontWeight:700,fontSize:14,marginTop:4}}><span>TOTAL</span><span>{fmt(receipt.total)}</span></div>
               <div>Pagamento: {receipt.paymentMethod}</div>
-              {receipt.paymentMethod==="dinheiro"&&<div>Troco: {fmt(receipt.change)}</div>}
+              {receipt.paymentMethod==="dinheiro"&&receipt.change>0&&<div>Troco: {fmt(receipt.change)}</div>}
               <HR/>
-              <div style={{fontSize:11,color:C.inkMd}}>
-                <div>📅 Troca até: <strong>{fmtDS(receipt.tradeDeadline)}</strong> (7 dias)</div>
-              </div>
+              <div style={{fontSize:11,color:C.inkMd}}>📅 Troca até: <strong>{fmtDS(receipt.tradeDeadline)}</strong> (7 dias)</div>
             </div>
-            <Fld label="WhatsApp do cliente" value={wpPhone} onChange={setWpPhone} placeholder="(11) 99999-9999"/>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <Fld label="WhatsApp do cliente" value={wpPhone} onChange={setWpPhone} placeholder="(24) 99999-9999"/>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:4}}>
               <Btn onClick={()=>sendWA(receipt)} v="success">📱 WhatsApp</Btn>
               <Btn onClick={()=>window.print()} v="secondary">🖨️ Imprimir</Btn>
             </div>
+            <Btn onClick={()=>{setReceipt(null);resetSale();}} full v="ghost" style={{marginTop:8}}>🛒 Nova Venda</Btn>
           </div>
         </div>
       )}
     </div>
   );
 }
+
 
 
 // ── CLIENTS ────────────────────────────────────────────────────────────────
@@ -1070,9 +1166,9 @@ function Clients({clients,setClients,sales,showToast,logActivity}){
             onMouseEnter={e=>e.currentTarget.style.borderColor=C.gold}
             onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
             <div style={{display:"flex",alignItems:"center",gap:12}}>
-              <div style={{width:38,height:38,borderRadius:"50%",background:c.type==="wholesale"?C.purpleLt:C.goldLt,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,color:c.type==="wholesale"?C.purple:C.gold,fontSize:15,flexShrink:0}}>{c.name[0]}</div>
+              <div style={{width:38,height:38,borderRadius:"50%",background:c.type==="wholesale"?C.purpleLt:C.goldLt,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,color:c.type==="wholesale"?C.purple:C.gold,fontSize:15,flexShrink:0}}>{(c.name.replace(/^[\d.\s]+/,""))[0]}</div>
               <div>
-                <div style={{fontWeight:500,fontSize:13.5}}>{c.name}</div>
+                <div style={{fontWeight:500,fontSize:13.5}}>{c.name.replace(/^[\d.\s]+/,"")}</div>
                 <div style={{fontSize:12,color:C.inkLt}}>{c.doc_type?.toUpperCase()}: {c.cpf_cnpj}{c.phone&&` · 📱 ${c.phone}`}{c.city&&` · ${c.city}`}</div>
               </div>
             </div>
