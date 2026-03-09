@@ -20,7 +20,7 @@ input,select,textarea,button{font-family:'Jost',sans-serif;}
 .fu{animation:fadeUp .25s cubic-bezier(.22,1,.36,1) forwards;}
 .cor{font-family:'Cormorant Garamond',serif;}
 .spin{animation:spin 1s linear infinite;}
-@media print{.no-print{display:none!important;}body{background:#fff;}}
+@media print{.no-print{display:none!important;}body{background:#fff;}#receipt-print{padding:0!important;}}
 @media(max-width:768px){
   .sidebar{width:100%!important;height:auto!important;position:relative!important;flex-direction:row!important;flex-wrap:wrap!important;}
   .main-content{margin-left:0!important;padding:16px!important;}
@@ -487,6 +487,7 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
   const [paid,setPaid]=useState(0);
   const [receipt,setReceipt]=useState(null);
   const [wpPhone,setWpPhone]=useState("");
+  const [wpEmail,setWpEmail]=useState("");
   const [freight,setFreight]=useState({cep:"",service:"pac",price:0,calc:false});
   const [saving,setSaving]=useState(false);
   const [pickerProd,setPickerProd]=useState(null);
@@ -614,6 +615,8 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
       await addMov({type:"venda",loc:stockLoc,desc:`Venda ${saleMode==="galpao"?"Galpão":saleMode==="online"?"Online":"Balcão"} – ${cart.length} item(s) – ${fmt(total)}`});
       await logActivity("venda",`${saleRow.client_name} — ${fmt(total)}`);
       setReceipt(displaySale);
+      setWpPhone(selClient?.phone||"");
+      setWpEmail(selClient?.email||"");
       setCart([]);setPaid(0);setAppliedPromo(null);setPromoCode("");
       setFreight({cep:"",service:"pac",price:0,calc:false});
       showToast("Venda finalizada!");
@@ -629,6 +632,78 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
       `\n\n*TOTAL: ${fmt(sale.total)}*\nPagamento: ${sale.paymentMethod}`+
       `\n\n📅 Troca até: ${fmtDS(sale.tradeDeadline)} (7 dias)\n\nObrigado! 🛍️`);
     window.open(`https://wa.me/55${phone}?text=${msg}`,"_blank");
+  };
+
+  const printReceipt=(sale)=>{
+    const w=window.open("","_blank","width=800,height=700");
+    const items=sale.items?.map(item=>`
+      <tr>
+        <td style="padding:9px 12px;text-align:center;font-weight:700;font-size:16px;border-bottom:1px solid #e8e4df">${item.qty}</td>
+        <td style="padding:9px 12px;font-size:14px;border-bottom:1px solid #e8e4df">${item.name}</td>
+        <td style="padding:9px 12px;text-align:center;font-weight:600;font-size:14px;border-bottom:1px solid #e8e4df">${item.sz}</td>
+        <td style="padding:9px 12px;text-align:right;font-weight:500;font-size:14px;border-bottom:1px solid #e8e4df">${fmt(item.price*item.qty)}</td>
+      </tr>`).join("");
+    const discRow=sale.discountAmt>0?`<tr><td colspan="3" style="padding:6px 12px;text-align:right;font-size:12px;color:#B85450">${sale.promo_code?"Cupom "+sale.promo_code:"Desconto "+sale.discountPct+"%"}</td><td style="padding:6px 12px;text-align:right;font-size:12px;color:#B85450">- ${fmt(sale.discountAmt)}</td></tr>`:"";
+    const fretRow=sale.freightPrice>0?`<tr><td colspan="3" style="padding:6px 12px;text-align:right;font-size:12px;color:#3D6B8C">Frete</td><td style="padding:6px 12px;text-align:right;font-size:12px;color:#3D6B8C">${fmt(sale.freightPrice)}</td></tr>`:"";
+    const clientName=(sale.clientName||"Avulso").replace(/^[\d.\s]+/,"");
+    const modeLabel=sale.sale_mode==="online"?"Online / Entrega":sale.sale_mode==="galpao"?"Venda Galpão":"Balcão";
+    w.document.write(`<!DOCTYPE html><html><head><title>Comprovante — The Cott</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;600&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+    <style>
+      *{box-sizing:border-box;margin:0;padding:0}
+      body{font-family:'Jost',sans-serif;color:#1a1714;background:#fff;padding:0}
+      .page{width:148mm;min-height:210mm;margin:0 auto;padding:16mm 14mm}
+      .brand{font-family:'Cormorant Garamond',serif;text-align:center;font-size:28px;letter-spacing:4px;margin-bottom:4px}
+      .sub{text-align:center;font-size:10px;letter-spacing:2px;color:#888;margin-bottom:14px;padding-bottom:12px;border-bottom:2px solid #1a1714}
+      .info-grid{display:grid;grid-template-columns:1fr 1fr;gap:3px 20px;font-size:12px;margin-bottom:14px}
+      .info-label{color:#888}
+      table{width:100%;border-collapse:collapse;margin-bottom:8px}
+      thead tr{background:#f7f5f2}
+      th{padding:7px 10px;font-size:10px;letter-spacing:1px;color:#888;font-weight:700;text-transform:uppercase;border-bottom:2px solid #1a1714}
+      th:first-child,td:first-child{text-align:center;width:46px}
+      th:nth-child(3),td:nth-child(3){text-align:center;width:56px}
+      th:last-child,td:last-child{text-align:right;width:100px}
+      .total-row{display:flex;justify-content:space-between;font-weight:700;font-size:17px;padding:9px 0;border-top:2px solid #1a1714;margin-top:4px}
+      .footer{margin-top:16px;padding-top:10px;border-top:1px dashed #ccc;text-align:center;font-size:10px;color:#aaa}
+      @media print{@page{size:A5;margin:0}.page{padding:12mm 10mm}}
+    </style></head><body>
+    <div class="page">
+      <div class="brand">✦ THE COTT ✦</div>
+      <div class="sub">GESTÃO FASHION</div>
+      <div class="info-grid">
+        <div><span class="info-label">Data: </span><strong>${new Date(sale.date).toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"})}</strong></div>
+        <div><span class="info-label">Vendedor: </span><strong>${sale.seller}</strong></div>
+        <div style="grid-column:1/-1"><span class="info-label">Cliente: </span><strong>${clientName}</strong>${sale.isWholesale?' <span style="background:#f0edf8;color:#6B5B9E;padding:1px 8px;border-radius:10px;font-size:10px;font-weight:700">ATACADO</span>':''}</div>
+        ${sale.sale_mode&&sale.sale_mode!=="balcao"?`<div style="grid-column:1/-1"><span class="info-label">Modalidade: </span><strong>${modeLabel}</strong></div>`:""}
+      </div>
+      <table>
+        <thead><tr><th>Qtd</th><th style="text-align:left">Produto</th><th>Tam</th><th>Valor</th></tr></thead>
+        <tbody>${items}${discRow}${fretRow}</tbody>
+      </table>
+      <div style="display:flex;justify-content:flex-end">
+        <div style="min-width:200px">
+          <div class="total-row"><span>TOTAL</span><span>${fmt(sale.total)}</span></div>
+          <div style="font-size:12px;color:#888;margin-top:4px">Pagamento: <strong style="color:#1a1714">${sale.paymentMethod}</strong>${sale.paymentMethod==="dinheiro"&&sale.change>0?" · Troco: "+fmt(sale.change):""}</div>
+        </div>
+      </div>
+      <div class="footer">
+        <div>📅 Troca até: <strong style="color:#1a1714">${new Date(sale.tradeDeadline).toLocaleDateString("pt-BR")}</strong> (7 dias corridos)</div>
+        <div style="margin-top:4px">THE COTT LTDA — obrigado pela preferência!</div>
+      </div>
+    </div>
+    <script>window.onload=()=>window.print();<\/script>
+    </body></html>`);
+    w.document.close();
+  };
+
+  const sendEmail=(sale)=>{
+    const clientName=(sale.clientName||"Avulso").replace(/^[\d.\s]+/,"");
+    const items=sale.items?.map(i=>`${i.qty}x ${i.name} (Tam ${i.sz}) — ${fmt(i.price*i.qty)}`).join("%0A");
+    const disc=sale.discountAmt>0?`%0ADesconto: -${fmt(sale.discountAmt)}`:"";
+    const fret=sale.freightPrice>0?`%0AFrete: ${fmt(sale.freightPrice)}`:"";
+    const body=`Olá ${clientName},%0A%0ASeu comprovante de compra — The Cott:%0A%0A${items}${disc}${fret}%0A%0ATOTAL: ${fmt(sale.total)}%0APagamento: ${sale.paymentMethod}%0A%0ATroca até: ${new Date(sale.tradeDeadline).toLocaleDateString("pt-BR")} (7 dias)%0A%0AObrigado pela preferência!%0AThe Cott LTDA`;
+    const email=wpEmail||"";
+    window.open(`mailto:${email}?subject=Comprovante The Cott — ${new Date(sale.date).toLocaleDateString("pt-BR")}&body=${body}`,"_blank");
   };
 
   const filteredClients=clients.filter(c=>
@@ -954,43 +1029,108 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
       {/* RECEIPT */}
       {receipt&&(
         <div style={{position:"fixed",top:0,left:0,width:"100vw",height:"100vh",background:"rgba(26,23,20,.65)",backdropFilter:"blur(4px)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",paddingLeft:"200px"}}>
-          <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,width:"90%",maxWidth:480,maxHeight:"90vh",overflowY:"auto",padding:28,boxShadow:"0 24px 80px rgba(0,0,0,.25)"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+          <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,width:"92%",maxWidth:540,maxHeight:"92vh",overflowY:"auto",boxShadow:"0 24px 80px rgba(0,0,0,.28)"}}>
+
+            {/* Header bar */}
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"18px 24px",borderBottom:`1px solid ${C.border}`}}>
               <div className="cor" style={{fontSize:20}}>✅ Venda Concluída</div>
-              <button onClick={()=>{setReceipt(null);resetSale();}} style={{background:"none",border:"none",color:C.inkFt,fontSize:28,cursor:"pointer"}}>×</button>
+              <button onClick={()=>{setReceipt(null);resetSale();}} style={{background:"none",border:"none",color:C.inkFt,fontSize:26,cursor:"pointer",lineHeight:1}}>×</button>
             </div>
-            <div style={{background:C.hover,borderRadius:10,padding:18,marginBottom:16,fontFamily:"monospace",fontSize:12.5,lineHeight:2}}>
-              <div className="cor" style={{textAlign:"center",fontSize:20,marginBottom:2}}>✦ THE COTT ✦</div>
-              <div style={{textAlign:"center",fontSize:11,color:C.inkLt,marginBottom:10}}>{fmtD(receipt.date)}</div>
-              <div>Cliente: {(receipt.clientName||"Avulso").replace(/^[\d.\s]+/,"")}</div>
-              <div>Vendedor: {receipt.seller}</div>
-              {receipt.isWholesale&&<div>Tipo: ATACADO</div>}
-              {receipt.sale_mode==="online"&&<div>Modalidade: ONLINE/ENTREGA</div>}
-              <HR/>
-              {receipt.items?.map((item,i)=>(
-                <div key={i} style={{display:"flex",justifyContent:"space-between"}}>
-                  <span>{item.name} ({item.sz}) ×{item.qty}</span>
-                  <span>{fmt(item.price*item.qty)}</span>
+
+            {/* Receipt content — this part prints */}
+            <div id="receipt-print" style={{padding:"24px 28px"}}>
+              {/* Company header */}
+              <div style={{textAlign:"center",marginBottom:18,paddingBottom:14,borderBottom:`2px solid ${C.ink}`}}>
+                <div className="cor" style={{fontSize:26,letterSpacing:3,marginBottom:2}}>✦ THE COTT ✦</div>
+                <div style={{fontSize:11,color:C.inkMd,letterSpacing:1}}>GESTÃO FASHION</div>
+              </div>
+
+              {/* Sale info */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"4px 20px",fontSize:12.5,marginBottom:14}}>
+                <div><span style={{color:C.inkLt}}>Data: </span><strong>{fmtD(receipt.date)}</strong></div>
+                <div><span style={{color:C.inkLt}}>Vendedor: </span><strong>{receipt.seller}</strong></div>
+                <div style={{gridColumn:"1/-1"}}><span style={{color:C.inkLt}}>Cliente: </span><strong>{(receipt.clientName||"Avulso").replace(/^[\d.\s]+/,"")}</strong>
+                  {receipt.isWholesale&&<span style={{marginLeft:8,background:C.purpleLt,color:C.purple,padding:"1px 7px",borderRadius:10,fontSize:11,fontWeight:600}}>ATACADO</span>}
                 </div>
-              ))}
-              <HR/>
-              {receipt.discountAmt>0&&<div style={{display:"flex",justifyContent:"space-between",color:C.red}}>
-                <span>{receipt.promo_code?"Cupom "+receipt.promo_code:"Desconto "+receipt.discountPct+"%"}</span>
-                <span>-{fmt(receipt.discountAmt)}</span>
-              </div>}
-              {receipt.freightPrice>0&&<div style={{display:"flex",justifyContent:"space-between",color:C.blue}}><span>Frete</span><span>{fmt(receipt.freightPrice)}</span></div>}
-              <div style={{display:"flex",justifyContent:"space-between",fontWeight:700,fontSize:14,marginTop:4}}><span>TOTAL</span><span>{fmt(receipt.total)}</span></div>
-              <div>Pagamento: {receipt.paymentMethod}</div>
-              {receipt.paymentMethod==="dinheiro"&&receipt.change>0&&<div>Troco: {fmt(receipt.change)}</div>}
-              <HR/>
-              <div style={{fontSize:11,color:C.inkMd}}>📅 Troca até: <strong>{fmtDS(receipt.tradeDeadline)}</strong> (7 dias)</div>
+                {receipt.sale_mode&&receipt.sale_mode!=="balcao"&&<div style={{gridColumn:"1/-1"}}><span style={{color:C.inkLt}}>Modalidade: </span><strong>{receipt.sale_mode==="online"?"Online / Entrega":"Venda Galpão"}</strong></div>}
+              </div>
+
+              {/* Items table */}
+              <table style={{width:"100%",borderCollapse:"collapse",marginBottom:12,fontSize:13}}>
+                <thead>
+                  <tr style={{background:"#f7f5f2"}}>
+                    <th style={{padding:"7px 10px",textAlign:"center",fontWeight:700,fontSize:11,letterSpacing:.5,color:C.inkMd,borderBottom:`2px solid ${C.border}`,width:50}}>QTD</th>
+                    <th style={{padding:"7px 10px",textAlign:"left",fontWeight:700,fontSize:11,letterSpacing:.5,color:C.inkMd,borderBottom:`2px solid ${C.border}`}}>PRODUTO</th>
+                    <th style={{padding:"7px 10px",textAlign:"center",fontWeight:700,fontSize:11,letterSpacing:.5,color:C.inkMd,borderBottom:`2px solid ${C.border}`,width:60}}>TAM</th>
+                    <th style={{padding:"7px 10px",textAlign:"right",fontWeight:700,fontSize:11,letterSpacing:.5,color:C.inkMd,borderBottom:`2px solid ${C.border}`,width:90}}>VALOR</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {receipt.items?.map((item,i)=>(
+                    <tr key={i} style={{borderBottom:`1px solid ${C.border}`}}>
+                      <td style={{padding:"8px 10px",textAlign:"center",fontWeight:700,fontSize:15}}>{item.qty}</td>
+                      <td style={{padding:"8px 10px",fontSize:13}}>{item.name}</td>
+                      <td style={{padding:"8px 10px",textAlign:"center",fontWeight:600,fontSize:13}}>{item.sz}</td>
+                      <td style={{padding:"8px 10px",textAlign:"right",fontWeight:500}}>{fmt(item.price*item.qty)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {/* Totals */}
+              <div style={{marginLeft:"auto",maxWidth:220,fontSize:12.5}}>
+                {receipt.discountAmt>0&&(
+                  <div style={{display:"flex",justifyContent:"space-between",color:C.red,marginBottom:3}}>
+                    <span>{receipt.promo_code?"Cupom "+receipt.promo_code:"Desconto "+receipt.discountPct+"%"}</span>
+                    <span>- {fmt(receipt.discountAmt)}</span>
+                  </div>
+                )}
+                {receipt.freightPrice>0&&(
+                  <div style={{display:"flex",justifyContent:"space-between",color:C.blue,marginBottom:3}}>
+                    <span>Frete</span><span>{fmt(receipt.freightPrice)}</span>
+                  </div>
+                )}
+                <div style={{display:"flex",justifyContent:"space-between",fontWeight:700,fontSize:16,padding:"8px 0",borderTop:`2px solid ${C.ink}`,marginTop:4}}>
+                  <span>TOTAL</span><span>{fmt(receipt.total)}</span>
+                </div>
+                <div style={{fontSize:12,color:C.inkMd,marginTop:3}}>
+                  Pagamento: <strong>{receipt.paymentMethod}</strong>
+                  {receipt.paymentMethod==="dinheiro"&&receipt.change>0&&<span> · Troco: {fmt(receipt.change)}</span>}
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div style={{marginTop:16,paddingTop:12,borderTop:`1px dashed ${C.border}`,fontSize:11,color:C.inkLt,textAlign:"center"}}>
+                <div>📅 Troca até: <strong style={{color:C.ink}}>{fmtDS(receipt.tradeDeadline)}</strong> (7 dias corridos)</div>
+                <div style={{marginTop:4,letterSpacing:.5}}>THE COTT LTDA — obrigado pela preferência!</div>
+              </div>
             </div>
-            <Fld label="WhatsApp do cliente" value={wpPhone} onChange={setWpPhone} placeholder="(24) 99999-9999"/>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:4}}>
-              <Btn onClick={()=>sendWA(receipt)} v="success">📱 WhatsApp</Btn>
-              <Btn onClick={()=>window.print()} v="secondary">🖨️ Imprimir</Btn>
+
+            {/* Action buttons — hidden on print */}
+            <div className="no-print" style={{padding:"16px 24px",borderTop:`1px solid ${C.border}`,display:"flex",flexDirection:"column",gap:10}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,alignItems:"end"}}>
+                <div>
+                  <div style={{fontSize:11,fontWeight:600,color:C.inkLt,letterSpacing:.5,marginBottom:5}}>WHATSAPP</div>
+                  <input value={wpPhone} onChange={e=>setWpPhone(e.target.value)}
+                    placeholder="(24) 99999-9999"
+                    style={{width:"100%",background:C.hover,border:`1px solid ${C.border}`,borderRadius:6,color:C.ink,padding:"8px 11px",fontSize:13,outline:"none"}}/>
+                </div>
+                <Btn onClick={()=>sendWA(receipt)} v="success">📱 WhatsApp</Btn>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,alignItems:"end"}}>
+                <div>
+                  <div style={{fontSize:11,fontWeight:600,color:C.inkLt,letterSpacing:.5,marginBottom:5}}>E-MAIL</div>
+                  <input value={wpEmail} onChange={e=>setWpEmail(e.target.value)}
+                    placeholder="cliente@email.com" type="email"
+                    style={{width:"100%",background:C.hover,border:`1px solid ${C.border}`,borderRadius:6,color:C.ink,padding:"8px 11px",fontSize:13,outline:"none"}}/>
+                </div>
+                <Btn onClick={()=>sendEmail(receipt)} v="blue">✉️ E-mail</Btn>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                <Btn onClick={()=>printReceipt(receipt)} v="secondary">🖨️ Imprimir</Btn>
+                <Btn onClick={()=>{setReceipt(null);resetSale();}} v="ghost">🛒 Nova Venda</Btn>
+              </div>
             </div>
-            <Btn onClick={()=>{setReceipt(null);resetSale();}} full v="ghost" style={{marginTop:8}}>🛒 Nova Venda</Btn>
           </div>
         </div>
       )}
