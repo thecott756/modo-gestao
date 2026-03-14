@@ -62,10 +62,10 @@ const USERS=[
 const CHANNELS=[
   {id:"galpao",   label:"Galpão",          icon:"🏭", color:"#4A7C5E",
    saleMode:["galpao","online"],
-   tabs:["inicio","pdv","clientes","transfer","produtos","vendas","devolucoes","etiquetas","atividades","dashboard"]},
+   tabs:["inicio","pdv","clientes","transfer","produtos","devolucoes","etiquetas","dashboard"]},
   {id:"centro",   label:"The Cott Centro", icon:"🏪", color:"#C8973A",
    saleMode:["balcao","whatsapp"],
-   tabs:["inicio","pdv","clientes","transfer","produtos","vendas","devolucoes","etiquetas","atividades","dashboard"]},
+   tabs:["inicio","pdv","clientes","transfer","produtos","devolucoes","etiquetas","dashboard"]},
 ];
 // Which channels each role can access
 const ROLE_CHANNELS={
@@ -81,7 +81,7 @@ const ROLE_TABS={
   galpao:   ["inicio","galpao","loja","transfer","produtos","etiquetas"],
 };
 // Size sort order
-const SIZE_ORDER=["PP","P","M","G","GG","XG","XGG","XL","GG","34","36","38","40","42","44","46","48","50","52"];
+const SIZE_ORDER=["PP","P","M","G","GG","XG","XGG","XL","34","36","38","40","42","44","46","48","50","52","54","56"];
 const sortSizes=(arr)=>[...arr].sort((a,b)=>{
   const ia=SIZE_ORDER.indexOf(a)<0?99:SIZE_ORDER.indexOf(a);
   const ib=SIZE_ORDER.indexOf(b)<0?99:SIZE_ORDER.indexOf(b);
@@ -504,7 +504,7 @@ function App(){
           {tab==="devolucoes"&&<Devolucoes sales={sales} setSales={setSales} products={products} stkG={stkG} setStkG={setStkG} stkL={stkL} setStkL={setStkL} addMov={addMov} showToast={showToast} logActivity={logActivity} channel={channel}/>}
           {tab==="nfe"       &&<NFe sales={sales} clients={clients} issuedNFe={issuedNFe} nfeConfig={nfeConfig} saveNfeConfig={saveNfeConfig} showToast={showToast} emitirNFe={emitirNFe} logActivity={logActivity}/>}
           {tab==="atividades"&&<Atividades activities={activities} channel={channel}/>}
-          {tab==="dashboard" &&<Dashboard products={products} stkG={stkG} stkL={stkL} movements={movements} sales={sales}/>}
+          {tab==="dashboard" &&<Dashboard products={products} stkG={stkG} stkL={stkL} movements={movements} sales={sales} activities={activities} channel={channel} setSales={setSales} showToast={showToast} logActivity={logActivity} addMov={addMov}/>}
         </>}
       </main>
       <Toast msg={toast.msg} type={toast.type}/>
@@ -645,7 +645,8 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
   const prod=products.find(p=>p.id===Number(selProd));
   const getPrice=p=>isWholesale?(p.wholesalePrice||p.retailPrice):p.retailPrice;
   const getStk=(pId,sz)=>{
-    const stockSrc=saleMode==="galpao"?stkG:stkL;
+    // Channel determines which stock to show
+    const stockSrc=channel==="galpao"?stkG:stkL;
     return stockSrc.find(s=>s.pId===pId&&s.sz===sz)?.qty||0;
   };
   const subtotal=cart.reduce((a,b)=>a+b.price*b.qty,0);
@@ -703,9 +704,9 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
     try{
       const now=new Date().toISOString();
       // Determine stock location based on sale mode
-      const stockLoc=saleMode==="galpao"?"galpao":"loja";
-      const stockTable=saleMode==="galpao"?"stock_galpao":"stock_loja";
-      const stockState=saleMode==="galpao"?stkG:stkL;
+      const stockLoc=channel==="galpao"?"galpao":"loja";
+      const stockTable=channel==="galpao"?"stock_galpao":"stock_loja";
+      const stockState=channel==="galpao"?stkG:stkL;
       // Build sale row with only columns that exist in DB
       const saleRow={
         id:uid(),
@@ -749,7 +750,7 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
           await sb.from(stockTable).update({qty:Math.max(0,(s.qty||0)-item.qty)}).eq("id",s._id);
         }
       }
-      if(saleMode==="galpao"){
+      if(channel==="galpao"){
         setStkG(prev=>{const u=[...prev];cart.forEach(item=>{const idx=u.findIndex(s=>s.pId===item.pId&&s.sz===item.sz);if(idx>=0)u[idx]={...u[idx],qty:Math.max(0,u[idx].qty-item.qty)};});return u;});
       }else{
         setStkL(prev=>{const u=[...prev];cart.forEach(item=>{const idx=u.findIndex(s=>s.pId===item.pId&&s.sz===item.sz);if(idx>=0)u[idx]={...u[idx],qty:Math.max(0,u[idx].qty-item.qty)};});return u;});
@@ -1077,23 +1078,46 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
             </div>
           </div>
         )}
-        <Btn v="success" onClick={()=>{
-          if(!done){showToast("Adicione pagamento suficiente","error");return;}
-          const mainMethod=payments[0]?.method||"dinheiro";
-          const mainPaid=paidSoFar;
-          setPaid(mainPaid);setPayMethod(mainMethod);
-          finalize();
-          // finalize() sets receipt — step stays until receipt modal is shown
-        }} full sz="lg" disabled={saving||!done}>{saving?"Salvando...":"✅ Confirmar e Finalizar"}</Btn>
+        {/* Confirm button — only show when payment not yet finalized */}
+        {!receipt&&(
+          <Btn v="success" onClick={async()=>{
+            if(!done){showToast("Adicione pagamento suficiente","error");return;}
+            const mainMethod=payments[0]?.method||"dinheiro";
+            const mainPaid=paidSoFar;
+            setPaid(mainPaid);setPayMethod(mainMethod);
+            await finalize();
+          }} full sz="lg" disabled={saving||!done}>{saving?"Salvando...":"✅ Confirmar e Finalizar"}</Btn>
+        )}
 
-        {/* Print prompt below confirm button */}
-        <div style={{marginTop:10,padding:"12px 16px",background:C.goldLt,borderRadius:10,display:"flex",alignItems:"center",gap:12,border:`1px solid ${C.gold}`}}>
-          <span style={{fontSize:20}}>🖨️</span>
-          <div style={{flex:1}}>
-            <div style={{fontWeight:600,fontSize:13,color:C.gold}}>Imprimir comprovante?</div>
-            <div style={{fontSize:11.5,color:C.inkMd}}>O comprovante será gerado após finalizar</div>
+        {/* After finalize: show print button immediately */}
+        {receipt&&(
+          <div style={{marginTop:4,display:"flex",flexDirection:"column",gap:10}}>
+            <div style={{background:C.greenLt,border:`1px solid ${C.green}`,borderRadius:10,padding:"14px 18px",display:"flex",alignItems:"center",gap:12}}>
+              <span style={{fontSize:24}}>🎉</span>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,color:C.green,fontSize:15}}>Venda finalizada!</div>
+                <div style={{fontSize:12,color:C.green}}>{fmt(receipt.total)} · {receipt.paymentMethod}</div>
+              </div>
+            </div>
+            <Btn v="gold" onClick={()=>{printReceipt(receipt);setPrinted(true);}} full sz="lg">
+              🖨️ Imprimir Comprovante
+            </Btn>
+            {!printed&&(
+              <div style={{background:"#FFF8E7",border:`1px solid ${C.gold}`,borderRadius:8,padding:"9px 14px",fontSize:12.5,color:"#7A5C00",display:"flex",alignItems:"center",gap:8}}>
+                <span>⚠️</span> Você ainda não imprimiu o comprovante!
+              </div>
+            )}
+            {printed&&(
+              <div style={{background:C.greenLt,borderRadius:8,padding:"9px 14px",fontSize:12.5,color:C.green,display:"flex",alignItems:"center",gap:8}}>
+                <span>✅</span> Comprovante impresso.
+              </div>
+            )}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              <Btn v="secondary" onClick={()=>sendWA(receipt)}>📱 WhatsApp</Btn>
+              <Btn v="ghost" onClick={()=>{setReceipt(null);resetSale();}}>🛒 Nova Venda</Btn>
+            </div>
           </div>
-        </div>
+        )}
       </div>
     );
   }
@@ -3392,64 +3416,253 @@ function Atividades({activities}){
 }
 
 // ── DASHBOARD ──────────────────────────────────────────────────────────────
-function Dashboard({products,stkG,stkL,movements,sales}){
-  const tG=stkG.reduce((a,b)=>a+b.qty,0);const tL=stkL.reduce((a,b)=>a+b.qty,0);
-  const tV=sales.reduce((a,b)=>a+(b.total||0),0);
-  const hoje=sales.filter(s=>new Date(s.date).toDateString()===new Date().toDateString());
-  const tHoje=hoje.reduce((a,b)=>a+(b.total||0),0);
-  const cards=[
-    {l:"Peças Galpão",v:tG,icon:"🏭",cl:C.gold},
-    {l:"Peças Loja",v:tL,icon:"👗",cl:C.blue},
-    {l:"Total Vendas",v:fmt(tV),icon:"💰",cl:C.green},
-    {l:"Vendas Hoje",v:fmt(tHoje),icon:"🛒",cl:C.purple},
+function Dashboard({products,stkG,stkL,movements,sales,activities,channel,setSales,showToast,logActivity,addMov}){
+  const [dashTab,setDashTab]=useState("overview"); // overview | vendas | atividades
+  const [saleSearch,setSaleSearch]=useState("");
+  const [selSale,setSelSale]=useState(null);
+  const [cancelling,setCancelling]=useState(false);
+  const scanRef=useRef();
+
+  useEffect(()=>{ if(dashTab==="vendas")scanRef.current?.focus(); },[dashTab]);
+
+  // ── Filter sales by channel ──
+  const channelSales=sales.filter(s=>{
+    if(!channel)return true;
+    if(channel==="galpao")return s.sale_mode==="galpao"||s.sale_mode==="online";
+    if(channel==="centro")return s.sale_mode==="balcao"||s.sale_mode==="whatsapp"||!s.sale_mode;
+    return true;
+  });
+  const channelActivities=(activities||[]).filter(a=>true); // all for now
+
+  const todaySales=channelSales.filter(s=>s.date?.startsWith(new Date().toISOString().slice(0,10)));
+  const totalG=stkG.reduce((a,b)=>a+b.qty,0);
+  const totalL=stkL.reduce((a,b)=>a+b.qty,0);
+  const mc={dinheiro:C.gold,pix:C.green,cartao:C.blue,boleto:C.inkMd};
+
+  const filteredSales=[...channelSales]
+    .filter(s=>{
+      if(!saleSearch)return true;
+      const q=saleSearch.toLowerCase();
+      return (s.clientName||"").toLowerCase().includes(q)||(s.seller||"").toLowerCase().includes(q);
+    })
+    .sort((a,b)=>new Date(b.date)-new Date(a.date));
+
+  const cancelSale=async(sale)=>{
+    if(!window.confirm(`Cancelar venda de ${fmt(sale.total)}?`))return;
+    setCancelling(true);
+    try{
+      await sb.from("sales").update({status:"cancelada"}).eq("id",sale.id);
+      setSales(prev=>prev.map(s=>s.id===sale.id?{...s,status:"cancelada"}:s));
+      await logActivity("cancelamento",`Venda cancelada — ${sale.clientName||"Avulso"} — ${fmt(sale.total)}`);
+      showToast("Venda cancelada ✅");
+      setSelSale(null);
+    }catch(err){showToast("Erro: "+err.message,"error");}
+    setCancelling(false);
+  };
+
+  const printSaleReceipt=(s)=>{
+    const w=window.open("","_blank","width=800,height=700");
+    const barcodeId=(s.id||"").replace(/-/g,"").substring(0,12).toUpperCase();
+    const items=(s.items||[]).map(item=>`<tr>
+      <td style="padding:8px 10px;text-align:center;font-weight:700">${item.qty}</td>
+      <td style="padding:8px 10px">${item.name}</td>
+      <td style="padding:8px 10px;text-align:center">${item.sz}</td>
+      <td style="padding:8px 10px;text-align:right">R$ ${(item.price*item.qty).toFixed(2).replace(".",",")}</td>
+    </tr>`).join("");
+    w.document.write(`<!DOCTYPE html><html><head><title>Comprovante</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.5/JsBarcode.all.min.js"><\/script>
+    <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;padding:20mm 15mm;color:#1a1714}
+    h2{font-family:Georgia,serif;font-size:24px;letter-spacing:3px;text-align:center;margin-bottom:4px}
+    .sub{text-align:center;font-size:10px;color:#888;letter-spacing:2px;margin-bottom:16px;padding-bottom:12px;border-bottom:2px solid #1a1714}
+    table{width:100%;border-collapse:collapse;margin:12px 0}th{background:#f7f5f2;padding:6px 10px;font-size:10px;letter-spacing:1px;color:#888;text-transform:uppercase;border-bottom:2px solid #1a1714}
+    td{border-bottom:1px solid #eee}.total{font-weight:700;font-size:16px;padding:8px 10px;border-top:2px solid #1a1714}
+    .bc{text-align:center;margin-top:14px;padding-top:12px;border-top:1px dashed #ccc}
+    .bc-label{font-size:9px;color:#aaa;margin-top:2px}
+    @media print{@page{size:A5;margin:0}body{padding:10mm 8mm}}</style></head><body>
+    <h2>✦ THE COTT ✦</h2><div class="sub">COMPROVANTE DE VENDA</div>
+    <p style="font-size:12px;margin-bottom:8px"><strong>Cliente:</strong> ${(s.clientName||"Avulso").replace(/^[\d.\s]+/,"")}</p>
+    <p style="font-size:12px;margin-bottom:12px"><strong>Data:</strong> ${new Date(s.date).toLocaleString("pt-BR")} · <strong>Vendedor:</strong> ${s.seller||""}</p>
+    <table><thead><tr><th style="width:46px">Qtd</th><th style="text-align:left">Produto</th><th style="width:60px">Tam</th><th style="width:100px;text-align:right">Valor</th></tr></thead>
+    <tbody>${items}</tbody>
+    <tfoot><tr><td colspan="3" class="total" style="text-align:right">TOTAL</td><td class="total" style="text-align:right;color:#4A7C5E">R$ ${(s.total||0).toFixed(2).replace(".",",")}</td></tr></tfoot>
+    </table>
+    <div class="bc"><svg id="bc"></svg><div class="bc-label">TROCA/DEVOLUÇÃO: ${barcodeId}</div></div>
+    <script>JsBarcode("#bc","${barcodeId}",{format:"CODE128",width:1.5,height:36,displayValue:false,margin:0,background:"transparent"});setTimeout(()=>window.print(),600);<\/script>
+    </body></html>`);
+    w.document.close();
+  };
+
+  // ── Sub tabs ──
+  const tabs=[
+    {id:"overview",label:"Visão Geral"},
+    {id:"vendas",label:`Vendas (${channelSales.filter(s=>s.status!=="cancelada").length})`},
+    {id:"atividades",label:"Atividades"},
   ];
+
   return(
     <div className="fu">
-      <PageHeader title="Dashboard" sub={new Date().toLocaleDateString("pt-BR",{weekday:"long",year:"numeric",month:"long",day:"numeric"})}/>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:14,marginBottom:28}}>
-        {cards.map(c=>(
-          <Card key={c.l} style={{borderLeft:`3px solid ${c.cl}`}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-              <div>
-                <div style={{fontSize:10.5,color:C.inkLt,marginBottom:8,letterSpacing:.5,textTransform:"uppercase"}}>{c.l}</div>
-                <div className="cor" style={{fontSize:30,fontWeight:400,color:c.cl}}>{c.v}</div>
-              </div>
-              <span style={{fontSize:24,opacity:.1}}>{c.icon}</span>
-            </div>
-          </Card>
+      <PageHeader title="Dashboard"/>
+
+      {/* Sub-tab bar */}
+      <div style={{display:"flex",gap:0,marginBottom:24,borderBottom:`2px solid ${C.border}`}}>
+        {tabs.map(t=>(
+          <button key={t.id} onClick={()=>setDashTab(t.id)} style={{
+            padding:"10px 20px",border:"none",background:"none",cursor:"pointer",fontSize:13.5,
+            fontWeight:dashTab===t.id?700:400,color:dashTab===t.id?C.ink:C.inkMd,
+            borderBottom:dashTab===t.id?`2px solid ${C.gold}`:"2px solid transparent",
+            marginBottom:"-2px",transition:"color .12s"
+          }}>{t.label}</button>
         ))}
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
-        <Card>
-          <SectionTitle>Últimas Movimentações</SectionTitle>
-          {movements.length===0?<div style={{color:C.inkFt,fontSize:13}}>Nenhuma movimentação.</div>
-            :movements.slice(0,8).map(m=>(
-              <div key={m.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
-                <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <Badge color={m.type==="entrada"?C.green:m.type==="saida"?C.red:C.blue}>{m.type}</Badge>
-                  <span style={{fontSize:12.5,color:C.inkMd}}>{m.descricao||m.desc}</span>
-                </div>
-                <span style={{fontSize:11,color:C.inkFt,flexShrink:0}}>{m.user}</span>
-              </div>
+
+      {/* ── OVERVIEW ── */}
+      {dashTab==="overview"&&(
+        <div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:14,marginBottom:28}}>
+            {[
+              {label:"Vendas hoje",val:fmt(todaySales.filter(s=>s.status!=="cancelada").reduce((a,b)=>a+(b.total||0),0)),sub:`${todaySales.filter(s=>s.status!=="cancelada").length} venda(s)`,color:C.green},
+              {label:"Total (mês)",val:fmt(channelSales.filter(s=>s.status!=="cancelada").reduce((a,b)=>a+(b.total||0),0)),sub:"todas as vendas",color:C.gold},
+              {label:"Est. Galpão",val:totalG,sub:"peças",color:C.purple},
+              {label:"Est. Loja",val:totalL,sub:"peças",color:C.blue},
+            ].map((s,i)=>(
+              <Card key={i}>
+                <div style={{fontSize:10.5,color:C.inkLt,marginBottom:6,letterSpacing:.5,textTransform:"uppercase"}}>{s.label}</div>
+                <div className="cor" style={{fontSize:28,color:s.color}}>{s.val}</div>
+                <div style={{fontSize:11,color:C.inkFt,marginTop:2}}>{s.sub}</div>
+              </Card>
             ))}
-        </Card>
-        <Card>
-          <SectionTitle>Últimas Vendas</SectionTitle>
-          {sales.length===0?<div style={{color:C.inkFt,fontSize:13}}>Nenhuma venda.</div>
-            :sales.slice(0,8).map(s=>(
-              <div key={s.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+            <Card>
+              <SectionTitle>Últimas vendas</SectionTitle>
+              {channelSales.filter(s=>s.status!=="cancelada").slice(0,6).map(s=>(
+                <div key={s.id} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:`1px solid ${C.border}`,fontSize:13}}>
+                  <div>
+                    <div style={{fontWeight:500}}>{(s.clientName||"Avulso").replace(/^[\d.\s]+/,"")}</div>
+                    <div style={{fontSize:11,color:C.inkLt}}>{fmtD(s.date)}</div>
+                  </div>
+                  <span style={{fontWeight:600,color:C.green}}>{fmt(s.total)}</span>
+                </div>
+              ))}
+              {channelSales.length===0&&<div style={{color:C.inkFt,fontSize:13,padding:"16px 0"}}>Nenhuma venda.</div>}
+            </Card>
+            <Card>
+              <SectionTitle>Movimentações recentes</SectionTitle>
+              {movements.slice(0,6).map((m,i)=>(
+                <div key={i} style={{padding:"6px 0",borderBottom:`1px solid ${C.border}`,fontSize:12.5}}>
+                  <div style={{fontWeight:500,color:C.ink}}>{m.descricao||m.desc}</div>
+                  <div style={{fontSize:11,color:C.inkLt}}>{fmtD(m.date)}</div>
+                </div>
+              ))}
+              {movements.length===0&&<div style={{color:C.inkFt,fontSize:13,padding:"16px 0"}}>Sem movimentações.</div>}
+            </Card>
+          </div>
+        </div>
+      )}
+
+      {/* ── VENDAS ── */}
+      {dashTab==="vendas"&&(
+        <div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10,marginBottom:20}}>
+            <Card style={{borderLeft:`3px solid ${C.green}`}}>
+              <div style={{fontSize:10,color:C.inkLt,marginBottom:4,textTransform:"uppercase",letterSpacing:.5}}>Total</div>
+              <div className="cor" style={{fontSize:24,color:C.green}}>{fmt(channelSales.filter(s=>s.status!=="cancelada").reduce((a,b)=>a+(b.total||0),0))}</div>
+            </Card>
+            {Object.entries(channelSales.filter(s=>s.status!=="cancelada").reduce((a,s)=>{a[s.paymentMethod]=(a[s.paymentMethod]||0)+s.total;return a;},{})).map(([m,v])=>(
+              <Card key={m} style={{borderLeft:`3px solid ${mc[m]||C.inkMd}`}}>
+                <div style={{fontSize:10,color:C.inkLt,marginBottom:4,textTransform:"capitalize"}}>{m}</div>
+                <div className="cor" style={{fontSize:20,color:mc[m]||C.inkMd}}>{fmt(v)}</div>
+              </Card>
+            ))}
+          </div>
+          <input ref={scanRef} value={saleSearch} onChange={e=>setSaleSearch(e.target.value)}
+            placeholder="📷 Escaneie o código ou busque por cliente..."
+            style={{width:"100%",maxWidth:500,background:C.surface,border:`1.5px solid ${C.gold}`,borderRadius:8,padding:"10px 14px",fontSize:13,outline:"none",color:C.ink,marginBottom:14}}/>
+          {selSale?(
+            <div style={{maxWidth:640}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
+                <button onClick={()=>setSelSale(null)} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:C.inkMd}}>←</button>
+                <div className="cor" style={{fontSize:22}}>Venda #{(selSale.id||"").substring(0,8).toUpperCase()}</div>
+                {selSale.status==="cancelada"&&<span style={{fontSize:11,background:"#FFF0F0",color:C.red,padding:"2px 8px",borderRadius:6,fontWeight:700}}>CANCELADA</span>}
+              </div>
+              <Card style={{marginBottom:12}}>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+                  <thead><tr style={{borderBottom:`2px solid ${C.border}`}}>
+                    {["Produto","Tam","Qtd","Valor"].map(h=><th key={h} style={{padding:"7px 8px",textAlign:h==="Qtd"||h==="Tam"?"center":"left",fontSize:11,fontWeight:700,color:C.inkLt,textTransform:"uppercase"}}>{h}</th>)}
+                  </tr></thead>
+                  <tbody>{(selSale.items||[]).map((item,i)=>(
+                    <tr key={i} style={{borderBottom:`1px solid ${C.border}`}}>
+                      <td style={{padding:"8px"}}>{item.name}</td>
+                      <td style={{padding:"8px",textAlign:"center",fontWeight:600}}>{item.sz}</td>
+                      <td style={{padding:"8px",textAlign:"center"}}>{item.qty}</td>
+                      <td style={{padding:"8px",textAlign:"right",color:C.green,fontWeight:600}}>{fmt(item.price*item.qty)}</td>
+                    </tr>
+                  ))}</tbody>
+                  <tfoot>
+                    <tr style={{borderTop:`2px solid ${C.border}`}}>
+                      <td colSpan={3} style={{padding:"10px 8px",textAlign:"right",fontWeight:700}}>TOTAL</td>
+                      <td style={{padding:"10px 8px",textAlign:"right",fontWeight:700,fontSize:16,color:C.green}}>{fmt(selSale.total)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </Card>
+              <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                <Btn v="secondary" onClick={()=>printSaleReceipt(selSale)}>🖨️ Reimprimir</Btn>
+                {selSale.status!=="cancelada"&&<Btn v="danger" onClick={()=>cancelSale(selSale)} disabled={cancelling}>{cancelling?"Cancelando...":"❌ Cancelar Venda"}</Btn>}
+              </div>
+            </div>
+          ):(
+            <div style={{display:"grid",gap:8}}>
+              {filteredSales.slice(0,60).map(s=>{
+                const cancelled=s.status==="cancelada";
+                return(
+                  <div key={s.id} onClick={()=>setSelSale(s)}
+                    style={{background:cancelled?"#FFF8F8":C.surface,border:`1.5px solid ${cancelled?C.red:C.border}`,borderRadius:10,padding:"12px 16px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,opacity:cancelled?.7:1,transition:"border-color .12s"}}
+                    onMouseEnter={e=>{if(!cancelled)e.currentTarget.style.borderColor=C.gold;}}
+                    onMouseLeave={e=>{e.currentTarget.style.borderColor=cancelled?C.red:C.border;}}>
+                    <div>
+                      <div style={{fontWeight:600,fontSize:13,display:"flex",alignItems:"center",gap:8}}>
+                        {(s.clientName||"Avulso").replace(/^[\d.\s]+/,"")}
+                        {cancelled&&<span style={{fontSize:10,color:C.red,background:"#FFF0F0",padding:"1px 6px",borderRadius:6,fontWeight:700}}>Cancelada</span>}
+                        {s.isWholesale&&<span style={{fontSize:10,color:C.purple,background:C.purpleLt,padding:"1px 6px",borderRadius:6}}>Atacado</span>}
+                      </div>
+                      <div style={{fontSize:11.5,color:C.inkLt}}>{fmtD(s.date)} · {s.seller} · {s.items?.length} item(s)</div>
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:10}}>
+                      <div className="cor" style={{fontSize:18,color:cancelled?C.inkLt:C.green}}>{fmt(s.total)}</div>
+                      <span style={{color:C.inkFt}}>›</span>
+                    </div>
+                  </div>
+                );
+              })}
+              {filteredSales.length===0&&<Card style={{textAlign:"center",color:C.inkFt,padding:40}}>Nenhuma venda.</Card>}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── ATIVIDADES ── */}
+      {dashTab==="atividades"&&(
+        <div>
+          <div style={{display:"grid",gap:8}}>
+            {channelActivities.length===0&&<Card style={{textAlign:"center",color:C.inkFt,padding:40}}>Nenhuma atividade registrada.</Card>}
+            {channelActivities.slice(0,100).map((a,i)=>(
+              <div key={i} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
                 <div>
-                  <span style={{fontWeight:500,fontSize:13}}>{s.clientName||"Avulso"}</span>
-                  <span style={{color:C.inkLt,marginLeft:6,fontSize:12}}>{s.items?.length} item(s)</span>
+                  <div style={{fontWeight:500,fontSize:13}}>{a.detail||a.action}</div>
+                  <div style={{fontSize:11,color:C.inkLt,marginTop:2}}>{a.username} · {fmtD(a.date)}</div>
                 </div>
-                <span style={{color:C.green,fontWeight:600,fontSize:13}}>{fmt(s.total)}</span>
+                <span style={{fontSize:11,background:C.hover,color:C.inkMd,padding:"2px 8px",borderRadius:6,whiteSpace:"nowrap"}}>{a.action}</span>
               </div>
             ))}
-        </Card>
-      </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 </script>
