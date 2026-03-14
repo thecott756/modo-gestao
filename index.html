@@ -75,7 +75,7 @@ const ROLE_CHANNELS={
   galpao:   ["galpao"],
 };
 const ROLE_TABS={
-  admin:    ["inicio","pdv","clientes","galpao","loja","transfer","produtos","vendas","devolucoes","etiquetas","nfe","atividades","dashboard"],
+  admin:    ["inicio","pdv","clientes","galpao","loja","transfer","produtos","vendas","devolucoes","etiquetas","nfe","atividades","dashboard","config"],
   gerente:  ["inicio","pdv","clientes","galpao","loja","transfer","produtos","vendas","devolucoes","etiquetas","dashboard"],
   vendedora:["inicio","pdv","clientes","vendas","devolucoes"],
   galpao:   ["inicio","galpao","loja","transfer","produtos","etiquetas"],
@@ -439,6 +439,7 @@ function App(){
     {id:"nfe",        label:"NF-e",          icon:"⊞"},
     {id:"atividades", label:"Atividades",    icon:"◷"},
     {id:"dashboard",  label:"Dashboard",     icon:"▦"},
+    {id:"config",     label:"Configurações", icon:"⚙"},
   ].filter(n=>{
     // Must be in role tabs AND in channel tabs
     const inRole=ROLE_TABS[user.role]?.includes(n.id);
@@ -511,6 +512,7 @@ function App(){
           {tab==="devolucoes"&&<Devolucoes sales={sales} setSales={setSales} products={products} stkG={stkG} setStkG={setStkG} stkL={stkL} setStkL={setStkL} addMov={addMov} showToast={showToast} logActivity={logActivity} channel={channel}/>}
           {tab==="nfe"       &&<NFe sales={sales} clients={clients} issuedNFe={issuedNFe} nfeConfig={nfeConfig} saveNfeConfig={saveNfeConfig} showToast={showToast} emitirNFe={emitirNFe} logActivity={logActivity}/>}
           {tab==="atividades"&&<Atividades activities={activities} channel={channel}/>}
+          {tab==="config"    &&<Configuracoes showToast={showToast} user={user}/>}
           {tab==="dashboard" &&<Dashboard products={products} stkG={stkG} stkL={stkL} movements={movements} sales={sales} activities={activities} channel={channel} setSales={setSales} showToast={showToast} logActivity={logActivity} addMov={addMov}/>}
         </>}
       </main>
@@ -704,6 +706,65 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
     if(freight.cep.replace(/\D/g,"").length<8){showToast("CEP inválido","error");return;}
     const prices={pac:18.50,sedex:32.80,sedex10:45.20};
     setFreight(f=>({...f,price:prices[f.service]||18.50,calc:true}));
+  };
+
+  const gerarBoleto=async(sale)=>{
+    // Load Asaas key from DB
+    let apiKey="";
+    try{
+      const{data}=await sb.from("nfe_config").select("asaas_key").eq("id",1).single();
+      apiKey=data?.asaas_key||"";
+    }catch(e){}
+    if(!apiKey){showToast("Configure a chave do Asaas em Configurações","error");return;}
+
+    showToast("Gerando boleto...");
+    try{
+      // 1. Find or create customer in Asaas
+      const clientName=(sale.clientName||"Avulso").replace(/^[\d.\s]+/,"");
+      const cpfCnpj=sale.clientCpfCnpj||"";
+      
+      let customerId="";
+      // Try to find existing customer
+      if(cpfCnpj){
+        const search=await fetch(`https://api.asaas.com/v3/customers?cpfCnpj=${cpfCnpj.replace(/\D/g,"")}`,{
+          headers:{"access_token":apiKey}
+        });
+        const sd=await search.json();
+        if(sd.data?.length>0)customerId=sd.data[0].id;
+      }
+      // Create customer if not found
+      if(!customerId){
+        const cr=await fetch("https://api.asaas.com/v3/customers",{
+          method:"POST",
+          headers:{"access_token":apiKey,"Content-Type":"application/json"},
+          body:JSON.stringify({name:clientName,cpfCnpj:cpfCnpj.replace(/\D/g,"")||undefined,phone:sale.clientPhone||undefined})
+        });
+        const cd=await cr.json();
+        customerId=cd.id;
+      }
+      if(!customerId){showToast("Erro ao criar cliente no Asaas","error");return;}
+
+      // 2. Create charge
+      const dueDate=new Date();dueDate.setDate(dueDate.getDate()+3);
+      const dueDateStr=dueDate.toISOString().split("T")[0];
+      const resp=await fetch("https://api.asaas.com/v3/payments",{
+        method:"POST",
+        headers:{"access_token":apiKey,"Content-Type":"application/json"},
+        body:JSON.stringify({
+          customer:customerId,
+          billingType:"BOLETO",
+          value:sale.total,
+          dueDate:dueDateStr,
+          description:`Venda The Cott #${(sale.id||"").substring(0,8).toUpperCase()}`,
+        })
+      });
+      const pd=await resp.json();
+      if(!pd.bankSlipUrl){showToast("Erro ao gerar boleto: "+(pd.errors?.[0]?.description||"tente novamente"),"error");return;}
+      
+      // 3. Open PDF
+      window.open(pd.bankSlipUrl,"_blank");
+      showToast("✅ Boleto gerado e aberto!");
+    }catch(e){showToast("Erro: "+e.message,"error");console.error(e);}
   };
 
   const finalize=async()=>{
@@ -1120,6 +1181,9 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
                 <span>✅</span> Comprovante impresso.
               </div>
             )}
+            <Btn v="secondary" onClick={()=>gerarBoleto({...receipt,clientCpfCnpj:selClient?.cpf_cnpj||selClient?.cpf||"",clientPhone:selClient?.phone||""})} full>
+              🧾 Gerar Boleto (Asaas)
+            </Btn>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
               <Btn v="secondary" onClick={()=>sendWA(receipt)}>📱 WhatsApp</Btn>
               <Btn v="ghost" onClick={()=>{setReceipt(null);resetSale();}}>🛒 Nova Venda</Btn>
@@ -1456,6 +1520,9 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
                 </div>
                 <Btn onClick={()=>sendEmail(receipt)} v="blue">✉️ E-mail</Btn>
               </div>
+              <Btn onClick={()=>gerarBoleto({...receipt,clientCpfCnpj:selClient?.cpf_cnpj||selClient?.cpf||"",clientPhone:selClient?.phone||""})} v="secondary" full>
+                🧾 Gerar Boleto (Asaas)
+              </Btn>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                 <Btn onClick={()=>{printReceipt(receipt);setPrinted(true);}} v="secondary">🖨️ Reimprimir</Btn>
                 <Btn onClick={()=>{setReceipt(null);resetSale();}} v="ghost">🛒 Nova Venda</Btn>
@@ -3699,6 +3766,144 @@ function Dashboard({products,stkG,stkL,movements,sales,activities,channel,setSal
 }
 
 
+
+
+// ── CONFIGURAÇÕES ────────────────────────────────────────────────────────────
+function Configuracoes({showToast,user}){
+  const [asaasKey,setAsaasKey]=useState("");
+  const [savedKey,setSavedKey]=useState("");
+  const [saving,setSaving]=useState(false);
+  const [testing,setTesting]=useState(false);
+  const [testResult,setTestResult]=useState(null); // null | "ok" | "erro"
+  const [showKey,setShowKey]=useState(false);
+
+  // Load key from Supabase on mount
+  useEffect(()=>{
+    const load=async()=>{
+      try{
+        const{data}=await sb.from("nfe_config").select("asaas_key").eq("id",1).single();
+        if(data?.asaas_key){setSavedKey(data.asaas_key);setAsaasKey(data.asaas_key);}
+      }catch(e){}
+    };
+    load();
+  },[]);
+
+  const saveKey=async()=>{
+    if(!asaasKey.trim()){showToast("Informe a chave da API","error");return;}
+    setSaving(true);
+    try{
+      await sb.from("nfe_config").upsert({id:1,asaas_key:asaasKey.trim()});
+      setSavedKey(asaasKey.trim());
+      showToast("✅ Chave salva com sucesso!");
+    }catch(e){showToast("Erro ao salvar: "+e.message,"error");}
+    setSaving(false);
+  };
+
+  const testKey=async()=>{
+    const key=asaasKey.trim()||savedKey;
+    if(!key){showToast("Informe a chave primeiro","error");return;}
+    setTesting(true);setTestResult(null);
+    try{
+      const r=await fetch("https://api.asaas.com/v3/customers?limit=1",{
+        headers:{"access_token":key,"Content-Type":"application/json"}
+      });
+      if(r.ok){setTestResult("ok");showToast("✅ Conexão com Asaas funcionando!");}
+      else{setTestResult("erro");showToast("❌ Chave inválida ou sem permissão","error");}
+    }catch(e){setTestResult("erro");showToast("❌ Erro de conexão: "+e.message,"error");}
+    setTesting(false);
+  };
+
+  const maskedKey=savedKey
+    ?savedKey.substring(0,12)+"••••••••••••••••••••"+savedKey.slice(-4)
+    :"";
+
+  return(
+    <div className="fu" style={{maxWidth:600}}>
+      <PageHeader title="Configurações" sub="Integrações e configurações do sistema"/>
+
+      {/* Asaas Integration */}
+      <Card style={{marginBottom:16}}>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
+          <div style={{width:42,height:42,borderRadius:10,background:"#EBF3FF",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>🔗</div>
+          <div>
+            <div style={{fontWeight:700,fontSize:15}}>Asaas — Geração de Boletos</div>
+            <div style={{fontSize:12,color:C.inkLt}}>Emita boletos registrados com QR Code PIX diretamente nas vendas</div>
+          </div>
+          {savedKey&&(
+            <span style={{marginLeft:"auto",background:testResult==="erro"?"#FFF0F0":C.greenLt,color:testResult==="erro"?C.red:C.green,fontSize:11,fontWeight:700,padding:"3px 10px",borderRadius:20,border:`1px solid ${testResult==="erro"?C.red:C.green}`}}>
+              {testResult==="erro"?"⚠️ Erro":"✅ Conectado"}
+            </span>
+          )}
+        </div>
+
+        <SectionTitle>Chave de API</SectionTitle>
+        <div style={{fontSize:12,color:C.inkLt,marginBottom:10}}>
+          Acesse <strong>asaas.com → Integrações → Chaves de API</strong> e copie a sua chave.
+          <br/>A chave fica salva de forma segura e nunca aparece em logs ou no código.
+        </div>
+
+        <div style={{display:"flex",gap:8,marginBottom:10}}>
+          <div style={{flex:1,position:"relative"}}>
+            <input
+              type={showKey?"text":"password"}
+              value={asaasKey}
+              onChange={e=>setAsaasKey(e.target.value)}
+              placeholder={savedKey?"••••• chave salva •••••":"Cole sua chave aqui: $aact_..."}
+              style={{width:"100%",background:C.hover,border:`1.5px solid ${C.border}`,borderRadius:7,color:C.ink,padding:"10px 44px 10px 13px",fontSize:13,outline:"none",fontFamily:"monospace"}}
+            />
+            <button onClick={()=>setShowKey(v=>!v)}
+              style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",fontSize:16,color:C.inkLt}}>
+              {showKey?"🙈":"👁️"}
+            </button>
+          </div>
+        </div>
+
+        {savedKey&&!showKey&&(
+          <div style={{fontSize:12,color:C.inkMd,background:C.hover,borderRadius:6,padding:"7px 12px",marginBottom:10,fontFamily:"monospace"}}>
+            Chave atual: {maskedKey}
+          </div>
+        )}
+
+        <div style={{display:"flex",gap:10}}>
+          <Btn v="gold" onClick={saveKey} disabled={saving||!asaasKey.trim()}>
+            {saving?"Salvando...":"💾 Salvar Chave"}
+          </Btn>
+          <Btn v="ghost" onClick={testKey} disabled={testing}>
+            {testing?"Testando...":"🔌 Testar Conexão"}
+          </Btn>
+        </div>
+
+        {testResult==="ok"&&(
+          <div style={{marginTop:12,background:C.greenLt,borderRadius:8,padding:"10px 14px",fontSize:13,color:C.green,display:"flex",alignItems:"center",gap:8}}>
+            <span>✅</span> Conexão com Asaas funcionando! Boletos disponíveis nas vendas.
+          </div>
+        )}
+        {testResult==="erro"&&(
+          <div style={{marginTop:12,background:"#FFF0F0",borderRadius:8,padding:"10px 14px",fontSize:13,color:C.red,display:"flex",alignItems:"center",gap:8}}>
+            <span>❌</span> Chave inválida. Verifique se copiou corretamente do Asaas.
+          </div>
+        )}
+      </Card>
+
+      {/* Como usar */}
+      <Card style={{background:C.hover,border:"none"}}>
+        <SectionTitle>Como usar os boletos</SectionTitle>
+        {[
+          ["1","Salve e teste a chave acima"],
+          ["2","Na tela de Venda → Pagamento, selecione 'Boleto' como forma de pagamento"],
+          ["3","Clique em '🧾 Gerar Boleto' — o PDF abre automaticamente para impressão"],
+          ["4","O boleto tem QR Code PIX embutido — cliente escolhe como pagar"],
+          ["5","Taxa: R$ 0,99 por boleto pago nos primeiros 3 meses, depois R$ 1,99. Boletos não pagos não são cobrados."],
+        ].map(([n,t])=>(
+          <div key={n} style={{display:"flex",gap:12,padding:"7px 0",borderBottom:`1px solid ${C.border}`,alignItems:"flex-start"}}>
+            <span style={{minWidth:22,height:22,borderRadius:"50%",background:C.gold,color:"#fff",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>{n}</span>
+            <span style={{fontSize:13,color:C.inkMd}}>{t}</span>
+          </div>
+        ))}
+      </Card>
+    </div>
+  );
+}
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 </script>
