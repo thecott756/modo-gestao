@@ -443,8 +443,15 @@ function App(){
     // Must be in role tabs AND in channel tabs
     const inRole=ROLE_TABS[user.role]?.includes(n.id);
     const inChannel=curChannel.tabs.includes(n.id);
-    // galpao/loja stock pages: always show for admin/gerente regardless of channel
-    if(n.id==="galpao"||n.id==="loja")return inRole;
+    // Stock pages: filter by channel
+    if(n.id==="galpao"){
+      if(channel==="centro")return false; // Centro doesn't see Galpão stock
+      return inRole;
+    }
+    if(n.id==="loja"){
+      if(channel==="galpao")return false; // Galpão doesn't see Loja stock
+      return inRole;
+    }
     return inRole&&inChannel;
   });
 
@@ -639,6 +646,7 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
   const [pickerProd,setPickerProd]=useState(null);
   const [pickerSz,setPickerSz]=useState(null);
   const [pickerQty,setPickerQty]=useState(1);
+  const [gradeQty,setGradeQty]=useState(1); // how many grades to add at once
   const [prodSearch,setProdSearch]=useState("");
 
   const isWholesale=selClient&&selClient.type==="wholesale";
@@ -1131,7 +1139,11 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
         <div>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <div className="cor" style={{fontSize:28,fontWeight:400}}>Nova Venda</div>
-            <Badge color={saleMode==="online"?C.blue:saleMode==="galpao"?C.purple:C.green}>{saleMode==="online"?"📦 Online":saleMode==="galpao"?"🏭 Galpão":"🏪 Balcão"}</Badge>
+            {(()=>{
+              const ml={balcao:"🏪 Balcão",galpao:"🏭 Galpão",online:"📦 Online",whatsapp:"📱 WhatsApp"};
+              const mc={balcao:C.green,galpao:C.purple,online:C.blue,whatsapp:C.green};
+              return <Badge color={mc[saleMode]||C.gold}>{ml[saleMode]||saleMode}</Badge>;
+            })()}
           </div>
           <div style={{fontSize:13,color:C.inkLt,marginTop:2}}>
             {selClient
@@ -1159,21 +1171,31 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
               <SectionTitle style={{marginBottom:0}}>Produtos</SectionTitle>
               <div style={{display:"flex",gap:6,alignItems:"center"}}>
                 {pickerProd&&sortSizes(pickerProd.sizes||[]).filter(sz=>getStk(pickerProd.id,sz)>0).length>0&&(
-                  <button onClick={()=>{
-                    sortSizes(pickerProd.sizes||[]).forEach(sz=>{
-                      if(getStk(pickerProd.id,sz)>0){
-                        setCart(prev=>{
-                          const idx=prev.findIndex(c=>c.pId===pickerProd.id&&c.sz===sz);
-                          if(idx>=0)return prev.map((c,i)=>i===idx?{...c,qty:c.qty+1}:c);
-                          return [...prev,{pId:pickerProd.id,name:pickerProd.name,sz,price:getPrice(pickerProd),qty:1,cat:pickerProd.cat,sku:pickerProd.sku}];
-                        });
-                      }
-                    });
-                    showToast("Grade completa adicionada!");
-                    setPickerProd(null);setPickerSz(null);
-                  }} style={{padding:"5px 10px",borderRadius:6,border:`1px solid ${C.purple}`,background:C.purpleLt,color:C.purple,cursor:"pointer",fontSize:12,fontWeight:600,whiteSpace:"nowrap"}}>
-                    📦 Grade completa
-                  </button>
+                  <div style={{display:"flex",alignItems:"center",gap:6,background:C.purpleLt,borderRadius:8,padding:"4px 8px",border:`1px solid ${C.purple}40`}}>
+                    <span style={{fontSize:11,fontWeight:600,color:C.purple,whiteSpace:"nowrap"}}>📦 Grade</span>
+                    <button onClick={()=>setGradeQty(q=>Math.max(1,q-1))} style={{width:22,height:22,borderRadius:4,border:`1px solid ${C.purple}40`,background:"#fff",cursor:"pointer",fontSize:14,fontWeight:700,color:C.purple,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
+                    <span style={{fontSize:14,fontWeight:700,color:C.purple,minWidth:16,textAlign:"center"}}>{gradeQty}</span>
+                    <button onClick={()=>setGradeQty(q=>q+1)} style={{width:22,height:22,borderRadius:4,border:`1px solid ${C.purple}40`,background:"#fff",cursor:"pointer",fontSize:14,fontWeight:700,color:C.purple,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+                    <button onClick={()=>{
+                      let added=0;
+                      sortSizes(pickerProd.sizes||[]).forEach(sz=>{
+                        const stk=getStk(pickerProd.id,sz);
+                        if(stk>0){
+                          const toAdd=Math.min(gradeQty,stk);
+                          setCart(prev=>{
+                            const idx=prev.findIndex(c=>c.pId===pickerProd.id&&c.sz===sz);
+                            if(idx>=0)return prev.map((c,i)=>i===idx?{...c,qty:c.qty+toAdd}:c);
+                            return [...prev,{pId:pickerProd.id,name:pickerProd.name,sz,price:getPrice(pickerProd),qty:toAdd,cat:pickerProd.cat,sku:pickerProd.sku}];
+                          });
+                          added++;
+                        }
+                      });
+                      showToast(`✅ ${added} tamanhos × ${gradeQty} adicionados!`);
+                      // DON'T close picker — let user keep adding
+                    }} style={{padding:"4px 10px",borderRadius:5,border:"none",background:C.purple,color:"#fff",cursor:"pointer",fontSize:12,fontWeight:700,whiteSpace:"nowrap"}}>
+                      ✓ Add Grade
+                    </button>
+                  </div>
                 )}
                 <input value={prodSearch} onChange={e=>setProdSearch(e.target.value)}
                   placeholder="Buscar..."
@@ -1218,7 +1240,7 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
 
                 <div style={{fontSize:11,fontWeight:700,color:C.inkMd,letterSpacing:.6,marginBottom:8,textTransform:"uppercase"}}>Selecione o tamanho</div>
                 <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:16}}>
-                  {pickerProd.sizes?.map(sz=>{
+                  {sortSizes(pickerProd.sizes||[]).map(sz=>{
                     const stk=getStk(pickerProd.id,sz);
                     const sel=pickerSz===sz;
                     return(
@@ -1935,7 +1957,7 @@ function Products({products,setProducts,setStkG,setStkL,sales,showToast,logActiv
                   <div/>
                 </div>
 
-                {variants.map((v,i)=>(
+                {sortSizes(variants.map(v=>v.sz)).map(sz=>{const v=variants.find(x=>x.sz===sz);if(!v)return null;const i=variants.indexOf(v);return(
                   <div key={v.sz} style={{display:"grid",gridTemplateColumns:"80px 1fr 1fr 90px 32px",gap:8,alignItems:"center",padding:"4px 10px",borderBottom:`1px solid ${C.border}`}}>
                     <div style={{fontWeight:600,fontSize:14,color:C.ink}}>{v.sz}</div>
                     <input type="text" inputMode="decimal" value={v.retailPrice} onChange={e=>setVariant(v.sz,"retailPrice",e.target.value)}
@@ -1948,7 +1970,7 @@ function Products({products,setProducts,setStkG,setStkL,sales,showToast,logActiv
                       placeholder="0" style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:5,color:C.ink,padding:"7px 9px",fontSize:13.5,outline:"none"}}/>
                     <button onClick={()=>setVariants(prev=>prev.filter((_,j)=>j!==i))} style={{background:C.redLt,border:"none",color:C.red,width:28,height:28,borderRadius:5,cursor:"pointer",fontSize:14}}>×</button>
                   </div>
-                ))}
+                );})
 
                 <div style={{marginTop:10,padding:"8px 12px",background:C.hover,borderRadius:6,fontSize:12.5,color:C.inkMd,display:"flex",justifyContent:"space-between"}}>
                   <span>Total galpão:</span>
@@ -2583,6 +2605,21 @@ function Transfer({stkG,setStkG,stkL,setStkL,products,addMov,showToast,logActivi
                 </div>
               </div>
 
+              {selProd&&sortSizes(selProd.sizes||[]).some(sz=>(dir==="g2l"?stkG:stkL).find(s=>s.pId===selProd.id&&s.sz===sz&&s.qty>0))&&(
+                <div style={{marginBottom:12}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,background:C.purpleLt,borderRadius:8,padding:"8px 12px",border:`1px solid ${C.purple}40`}}>
+                    <span style={{fontSize:12,fontWeight:600,color:C.purple}}>📦 Transferir grade completa:</span>
+                    <Btn v="ghost" sz="sm" onClick={()=>{
+                      const srcStk=dir==="g2l"?stkG:stkL;
+                      sortSizes(selProd.sizes||[]).forEach(sz=>{
+                        const s=srcStk.find(x=>x.pId===selProd.id&&x.sz===sz);
+                        if(s?.qty>0)setQtys(prev=>({...prev,[sz]:s.qty}));
+                      });
+                      showToast("Grade preenchida — revise e confirme");
+                    }}>Preencher tudo</Btn>
+                  </div>
+                </div>
+              )}
               <Fld label="Observação (opcional)" value={obs} onChange={setObs} placeholder="Ex: reposição semana 10..."/>
               <Btn onClick={handleTransfer} v="gold" full sz="lg" disabled={saving}>
                 {saving?"Transferindo...":"⇌ Confirmar Transferência"}
