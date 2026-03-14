@@ -420,7 +420,7 @@ function App(){
           {tab==="loja"      &&<StockPage title="Loja" loc="loja" stock={stkL} setStock={setStkL} products={products} addMov={addMov} showToast={showToast} table="stock_loja" logActivity={logActivity}/>}
           {tab==="transfer"  &&<Transfer stkG={stkG} setStkG={setStkG} stkL={stkL} setStkL={setStkL} products={products} addMov={addMov} showToast={showToast} logActivity={logActivity}/>}
           {tab==="produtos"  &&<Products products={products} setProducts={setProducts} setStkG={setStkG} setStkL={setStkL} sales={sales} showToast={showToast} logActivity={logActivity}/>}
-          {tab==="vendas"    &&<Sales sales={sales} issuedNFe={issuedNFe}/>}
+          {tab==="vendas"    &&<Sales sales={sales} setSales={setSales} showToast={showToast} logActivity={logActivity} issuedNFe={issuedNFe}/>}
           {tab==="etiquetas" &&<Labels products={products}/>}
           {tab==="nfe"       &&<NFe sales={sales} clients={clients} issuedNFe={issuedNFe} nfeConfig={nfeConfig} saveNfeConfig={saveNfeConfig} showToast={showToast} emitirNFe={emitirNFe} logActivity={logActivity}/>}
           {tab==="atividades"&&<Atividades activities={activities}/>}
@@ -552,6 +552,7 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
   const [wpEmail,setWpEmail]=useState("");
   const [freight,setFreight]=useState({cep:"",service:"pac",price:0,calc:false});
   const [saving,setSaving]=useState(false);
+  const [printed,setPrinted]=useState(false);
   const [payStep,setPayStep]=useState(0);   // payment wizard step
   const [payments,setPayments]=useState([]); // [{method, amount}]
   const [payAmt,setPayAmt]=useState("");     // current payment amount input
@@ -679,6 +680,7 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
       await addMov({type:"venda",loc:stockLoc,desc:`Venda ${saleMode==="galpao"?"Galpão":saleMode==="online"?"Online":"Balcão"} – ${cart.length} item(s) – ${fmt(total)}`});
       await logActivity("venda",`${saleRow.client_name} — ${fmt(total)}`);
       setReceipt(displaySale);
+      setPrinted(false);
       setWpPhone(selClient?.phone||"");
       setWpEmail(selClient?.email||"");
       setCart([]);setPaid(0);setAppliedPromo(null);setPromoCode("");
@@ -784,7 +786,7 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
     setClients(p=>[...p,{...c,cpf_cnpj:c.cpfCnpj}]);setSelClient(c);setStep("sale");showToast("Cliente cadastrado!");
   };
 
-  const resetSale=()=>{setStep("mode");setClientMode(null);setSelClient(null);setCart([]);setNewClient(blankC);setAppliedPromo(null);setPromoCode("");setSaleMode("");setPayStep(0);setPayments([]);};
+  const resetSale=()=>{setStep("mode");setClientMode(null);setSelClient(null);setCart([]);setNewClient(blankC);setAppliedPromo(null);setPromoCode("");setSaleMode("");setPayStep(0);setPayments([]);setPayAmt("");setPrinted(false);};
 
   // ── STEP: MODE ──
   if(step==="mode")return(
@@ -992,7 +994,17 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
           const mainPaid=paidSoFar;
           setPaid(mainPaid);setPayMethod(mainMethod);
           finalize();
+          // finalize() sets receipt — step stays until receipt modal is shown
         }} full sz="lg" disabled={saving||!done}>{saving?"Salvando...":"✅ Confirmar e Finalizar"}</Btn>
+
+        {/* Print prompt below confirm button */}
+        <div style={{marginTop:10,padding:"12px 16px",background:C.goldLt,borderRadius:10,display:"flex",alignItems:"center",gap:12,border:`1px solid ${C.gold}`}}>
+          <span style={{fontSize:20}}>🖨️</span>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:600,fontSize:13,color:C.gold}}>Imprimir comprovante?</div>
+            <div style={{fontSize:11.5,color:C.inkMd}}>O comprovante será gerado após finalizar</div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -1275,6 +1287,22 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
 
             {/* Action buttons — hidden on print */}
             <div className="no-print" style={{padding:"16px 24px",borderTop:`1px solid ${C.border}`,display:"flex",flexDirection:"column",gap:10}}>
+
+              {/* Not-printed warning */}
+              {!printed&&(
+                <div style={{background:"#FFF8E7",border:`1px solid ${C.gold}`,borderRadius:9,padding:"10px 14px",display:"flex",alignItems:"center",gap:10}}>
+                  <span style={{fontSize:18}}>⚠️</span>
+                  <div style={{flex:1,fontSize:12.5,color:"#7A5C00",fontWeight:500}}>Você ainda não imprimiu o comprovante!</div>
+                  <Btn v="gold" sz="sm" onClick={()=>{printReceipt(receipt);setPrinted(true);}}>🖨️ Imprimir agora</Btn>
+                </div>
+              )}
+              {printed&&(
+                <div style={{background:C.greenLt,borderRadius:9,padding:"10px 14px",display:"flex",alignItems:"center",gap:10}}>
+                  <span style={{fontSize:18}}>✅</span>
+                  <div style={{fontSize:12.5,color:C.green,fontWeight:500}}>Comprovante impresso.</div>
+                </div>
+              )}
+
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,alignItems:"end"}}>
                 <div>
                   <div style={{fontSize:11,fontWeight:600,color:C.inkLt,letterSpacing:.5,marginBottom:5}}>WHATSAPP</div>
@@ -1294,7 +1322,7 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
                 <Btn onClick={()=>sendEmail(receipt)} v="blue">✉️ E-mail</Btn>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                <Btn onClick={()=>printReceipt(receipt)} v="secondary">🖨️ Imprimir</Btn>
+                <Btn onClick={()=>{printReceipt(receipt);setPrinted(true);}} v="secondary">🖨️ Reimprimir</Btn>
                 <Btn onClick={()=>{setReceipt(null);resetSale();}} v="ghost">🛒 Nova Venda</Btn>
               </div>
             </div>
@@ -1562,6 +1590,7 @@ function Products({products,setProducts,setStkG,setStkL,sales,showToast,logActiv
   const [activeTab,setActiveTab]=useState("dados");
   const [search,setSearch]=useState("");
   const [saving,setSaving]=useState(false);
+  const [printed,setPrinted]=useState(false);
   const [payStep,setPayStep]=useState(0);   // payment wizard step
   const [payments,setPayments]=useState([]); // [{method, amount}]
   const [payAmt,setPayAmt]=useState("");     // current payment amount input
@@ -2251,6 +2280,7 @@ function Transfer({stkG,setStkG,stkL,setStkL,products,addMov,showToast,logActivi
   const [qtys,setQtys]=useState({});
   const [obs,setObs]=useState("");
   const [saving,setSaving]=useState(false);
+  const [printed,setPrinted]=useState(false);
   const [payStep,setPayStep]=useState(0);   // payment wizard step
   const [payments,setPayments]=useState([]); // [{method, amount}]
   const [payAmt,setPayAmt]=useState("");     // current payment amount input
@@ -2465,13 +2495,196 @@ function Transfer({stkG,setStkG,stkL,setStkL,products,addMov,showToast,logActivi
 }
 
 // ── SALES ──────────────────────────────────────────────────────────────────
-function Sales({sales,issuedNFe}){
+function Sales({sales,setSales,showToast,logActivity,issuedNFe}){
+  const [view,setView]=useState("list"); // list | detail
+  const [selSale,setSelSale]=useState(null);
+  const [search,setSearch]=useState("");
+  const [cancelling,setCancelling]=useState(false);
+  const [scanCode,setScanCode]=useState("");
+  const scanRef=useRef();
+
+  // Auto-focus scan field
+  useEffect(()=>{ if(view==="list")scanRef.current?.focus(); },[view]);
+
   const total=sales.reduce((a,b)=>a+(b.total||0),0);
   const byM=sales.reduce((a,s)=>{a[s.paymentMethod]=(a[s.paymentMethod]||0)+s.total;return a;},{});
   const mc={dinheiro:C.gold,pix:C.green,cartao:C.blue,boleto:C.inkMd};
+
+  const filtered=[...sales]
+    .filter(s=>{
+      if(!search)return true;
+      const q=search.toLowerCase();
+      return (s.clientName||"").toLowerCase().includes(q)||
+             (s.id||"").toLowerCase().includes(q)||
+             (s.seller||"").toLowerCase().includes(q)||
+             (s.items||[]).some(i=>i.name?.toLowerCase().includes(q));
+    })
+    .sort((a,b)=>new Date(b.date)-new Date(a.date));
+
+  // Barcode scan — on Enter look for sale by ID
+  const handleScan=(e)=>{
+    if(e.key==="Enter"){
+      const code=scanCode.trim();
+      setScanCode("");
+      if(!code)return;
+      const found=sales.find(s=>s.id===code||(s.id||"").startsWith(code));
+      if(found){setSelSale(found);setView("detail");}
+      else showToast("Venda não encontrada: "+code,"error");
+    }
+  };
+
+  const cancelSale=async(sale)=>{
+    if(!window.confirm(`Cancelar venda de ${fmt(sale.total)} para ${sale.clientName||"Avulso"}?`))return;
+    setCancelling(true);
+    try{
+      await sb.from("sales").update({status:"cancelada"}).eq("id",sale.id);
+      setSales(prev=>prev.map(s=>s.id===sale.id?{...s,status:"cancelada"}:s));
+      await logActivity("cancelamento",`Venda cancelada — ${sale.clientName||"Avulso"} — ${fmt(sale.total)}`);
+      showToast("Venda cancelada");
+      setView("list");setSelSale(null);
+    }catch(err){showToast("Erro: "+err.message,"error");}
+    setCancelling(false);
+  };
+
+  const printSaleReceipt=(s)=>{
+    const w=window.open("","_blank","width=800,height=700");
+    const items=(s.items||[]).map(item=>`
+      <tr>
+        <td style="padding:9px 12px;text-align:center;font-weight:700;font-size:16px;border-bottom:1px solid #e8e4df">${item.qty}</td>
+        <td style="padding:9px 12px;font-size:14px;border-bottom:1px solid #e8e4df">${item.name}</td>
+        <td style="padding:9px 12px;text-align:center;font-weight:600;font-size:14px;border-bottom:1px solid #e8e4df">${item.sz}</td>
+        <td style="padding:9px 12px;text-align:right;font-weight:500;font-size:14px;border-bottom:1px solid #e8e4df">R$ ${(item.price*item.qty).toFixed(2).replace(".",",")}</td>
+      </tr>`).join("");
+    const discRow=s.discountAmt>0?`<tr><td colspan="3" style="padding:6px 12px;text-align:right;font-size:12px;color:#B85450">${s.promo_code?"Cupom "+s.promo_code:"Desconto "+s.discountPct+"%"}</td><td style="padding:6px 12px;text-align:right;font-size:12px;color:#B85450">- R$ ${(s.discountAmt||0).toFixed(2).replace(".",",")}</td></tr>`:"";
+    const fretRow=(s.freightPrice||0)>0?`<tr><td colspan="3" style="padding:6px 12px;text-align:right;font-size:12px;color:#3D6B8C">Frete</td><td style="padding:6px 12px;text-align:right;font-size:12px;color:#3D6B8C">R$ ${(s.freightPrice||0).toFixed(2).replace(".",",")}</td></tr>`:"";
+    const clientName=(s.clientName||"Avulso").replace(/^[\d.\s]+/,"");
+    // Barcode = sale ID (first 12 chars for Code128)
+    const barcodeId=(s.id||"").replace(/-/g,"").substring(0,12).toUpperCase();
+    w.document.write(`<!DOCTYPE html><html><head><title>Comprovante — The Cott</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.5/JsBarcode.all.min.js"><\/script>
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;600&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+    <style>
+      *{box-sizing:border-box;margin:0;padding:0}body{font-family:'Jost',sans-serif;color:#1a1714;background:#fff;padding:0}
+      .page{width:148mm;min-height:210mm;margin:0 auto;padding:14mm 12mm}
+      .brand{font-family:'Cormorant Garamond',serif;text-align:center;font-size:26px;letter-spacing:4px;margin-bottom:4px}
+      .sub{text-align:center;font-size:10px;letter-spacing:2px;color:#888;margin-bottom:14px;padding-bottom:12px;border-bottom:2px solid #1a1714}
+      .info-grid{display:grid;grid-template-columns:1fr 1fr;gap:3px 20px;font-size:12px;margin-bottom:14px}
+      .info-label{color:#888}
+      table{width:100%;border-collapse:collapse;margin-bottom:8px}
+      thead tr{background:#f7f5f2}
+      th{padding:7px 10px;font-size:10px;letter-spacing:1px;color:#888;font-weight:700;text-transform:uppercase;border-bottom:2px solid #1a1714}
+      th:first-child,td:first-child{text-align:center;width:46px}
+      th:nth-child(3),td:nth-child(3){text-align:center;width:56px}
+      th:last-child,td:last-child{text-align:right;width:100px}
+      .total-row{display:flex;justify-content:space-between;font-weight:700;font-size:17px;padding:9px 0;border-top:2px solid #1a1714;margin-top:4px}
+      .barcode-wrap{text-align:center;margin-top:14px;padding-top:12px;border-top:1px dashed #ccc}
+      .barcode-wrap svg{max-width:160px}
+      .barcode-label{font-size:9px;color:#aaa;margin-top:2px;letter-spacing:1px}
+      .footer{margin-top:10px;text-align:center;font-size:10px;color:#aaa}
+      @media print{@page{size:A5;margin:0}.page{padding:10mm 8mm}}
+    </style></head><body>
+    <div class="page">
+      <div class="brand">✦ THE COTT ✦</div>
+      <div class="sub">COMPROVANTE DE VENDA</div>
+      <div class="info-grid">
+        <div><span class="info-label">Data: </span><strong>${new Date(s.date).toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"})}</strong></div>
+        <div><span class="info-label">Vendedor: </span><strong>${s.seller||""}</strong></div>
+        <div style="grid-column:1/-1"><span class="info-label">Cliente: </span><strong>${clientName}</strong>${s.isWholesale?' <span style="background:#f0edf8;color:#6B5B9E;padding:1px 8px;border-radius:10px;font-size:10px;font-weight:700">ATACADO</span>':''}</div>
+      </div>
+      <table>
+        <thead><tr><th>Qtd</th><th style="text-align:left">Produto</th><th>Tam</th><th>Valor</th></tr></thead>
+        <tbody>${items}</tbody>
+        <tfoot>${discRow}${fretRow}
+          <tr><td colspan="3" style="padding:8px 12px;text-align:right;font-size:13px;font-weight:700;border-top:2px solid #1a1714">TOTAL</td>
+          <td style="padding:8px 12px;text-align:right;font-size:16px;font-weight:700;border-top:2px solid #1a1714;color:#4A7C5E">R$ ${(s.total||0).toFixed(2).replace(".",",")}</td></tr>
+        </tfoot>
+      </table>
+      <div class="barcode-wrap">
+        <svg id="bc"></svg>
+        <div class="barcode-label">TROCA/DEVOLUÇÃO: ${barcodeId}</div>
+      </div>
+      <div class="footer">
+        📅 Troca até: <strong>${new Date(s.tradeDeadline||s.date).toLocaleDateString("pt-BR")}</strong> (7 dias) · THE COTT LTDA — obrigado!
+      </div>
+    </div>
+    <script>
+      JsBarcode("#bc","${barcodeId}",{format:"CODE128",width:1.5,height:36,displayValue:false,margin:0,background:"transparent"});
+      setTimeout(()=>window.print(),600);
+    <\/script>
+    </body></html>`);
+    w.document.close();
+  };
+
+  // ── DETAIL VIEW ──
+  if(view==="detail"&&selSale){
+    const s=selSale;
+    const cancelled=s.status==="cancelada";
+    return(
+      <div className="fu" style={{maxWidth:680}}>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:24}}>
+          <button onClick={()=>{setView("list");setSelSale(null);}} style={{background:"none",border:"none",color:C.inkMd,cursor:"pointer",fontSize:22}}>←</button>
+          <div style={{flex:1}}>
+            <div className="cor" style={{fontSize:26}}>Venda #{(s.id||"").substring(0,8).toUpperCase()}</div>
+            <div style={{fontSize:13,color:C.inkLt}}>{fmtD(s.date)} · {s.seller}</div>
+          </div>
+          {cancelled&&<span style={{background:"#FFF0F0",color:C.red,padding:"4px 12px",borderRadius:8,fontSize:12,fontWeight:700}}>CANCELADA</span>}
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
+          <Card>
+            <div style={{fontSize:11,color:C.inkLt,marginBottom:4,textTransform:"uppercase",letterSpacing:.5}}>Cliente</div>
+            <div style={{fontWeight:600,fontSize:14}}>{(s.clientName||"Avulso").replace(/^[\d.\s]+/,"")}</div>
+            {s.clientPhone&&<div style={{fontSize:12,color:C.inkLt}}>{s.clientPhone}</div>}
+            {s.isWholesale&&<Badge color={C.purple} style={{marginTop:4}}>Atacado</Badge>}
+          </Card>
+          <Card>
+            <div style={{fontSize:11,color:C.inkLt,marginBottom:4,textTransform:"uppercase",letterSpacing:.5}}>Pagamento</div>
+            <div style={{fontWeight:600,fontSize:14,textTransform:"capitalize"}}>{s.paymentMethod}</div>
+            <div className="cor" style={{fontSize:22,color:C.green}}>{fmt(s.total)}</div>
+          </Card>
+        </div>
+
+        <Card style={{marginBottom:12}}>
+          <SectionTitle>Itens da venda</SectionTitle>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+            <thead><tr style={{borderBottom:`2px solid ${C.border}`}}>
+              {["Produto","Tam","Qtd","Valor"].map(h=><th key={h} style={{padding:"7px 8px",textAlign:h==="Qtd"||h==="Tam"?"center":"left",fontSize:11,fontWeight:700,color:C.inkLt,textTransform:"uppercase",letterSpacing:.5}}>{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {(s.items||[]).map((item,i)=>(
+                <tr key={i} style={{borderBottom:`1px solid ${C.border}`}}>
+                  <td style={{padding:"8px"}}>{item.name}</td>
+                  <td style={{padding:"8px",textAlign:"center",fontWeight:600}}>{item.sz}</td>
+                  <td style={{padding:"8px",textAlign:"center"}}>{item.qty}</td>
+                  <td style={{padding:"8px",textAlign:"right",fontWeight:600,color:C.green}}>{fmt(item.price*item.qty)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              {(s.discountAmt||0)>0&&<tr><td colSpan={3} style={{padding:"6px 8px",textAlign:"right",fontSize:12,color:C.red}}>Desconto</td><td style={{padding:"6px 8px",textAlign:"right",fontSize:12,color:C.red}}>- {fmt(s.discountAmt)}</td></tr>}
+              {(s.freightPrice||0)>0&&<tr><td colSpan={3} style={{padding:"6px 8px",textAlign:"right",fontSize:12,color:C.blue}}>Frete</td><td style={{padding:"6px 8px",textAlign:"right",fontSize:12,color:C.blue}}>{fmt(s.freightPrice)}</td></tr>}
+              <tr style={{borderTop:`2px solid ${C.border}`}}>
+                <td colSpan={3} style={{padding:"10px 8px",textAlign:"right",fontWeight:700}}>TOTAL</td>
+                <td style={{padding:"10px 8px",textAlign:"right",fontWeight:700,fontSize:17,color:C.green}}>{fmt(s.total)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </Card>
+
+        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+          <Btn v="secondary" onClick={()=>printSaleReceipt(s)}>🖨️ Reimprimir Comprovante</Btn>
+          {!cancelled&&<Btn v="danger" onClick={()=>cancelSale(s)} disabled={cancelling}>{cancelling?"Cancelando...":"❌ Cancelar Venda"}</Btn>}
+        </div>
+      </div>
+    );
+  }
+
+  // ── LIST VIEW ──
   return(
     <div className="fu">
-      <PageHeader title="Vendas" sub={`${sales.length} vendas · ${issuedNFe.length} NF-es`}/>
+      <PageHeader title="Vendas" sub={`${sales.length} vendas · ${fmt(total)} total`}/>
+
+      {/* Summary cards */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:12,marginBottom:24}}>
         <Card style={{borderLeft:`3px solid ${C.green}`}}>
           <div style={{fontSize:10.5,color:C.inkLt,marginBottom:6,letterSpacing:.5,textTransform:"uppercase"}}>Total Geral</div>
@@ -2484,24 +2697,51 @@ function Sales({sales,issuedNFe}){
           </Card>
         ))}
       </div>
-      {sales.length===0?<Card style={{textAlign:"center",color:C.inkFt,padding:40}}>Nenhuma venda registrada.</Card>
+
+      {/* Barcode scan field */}
+      <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:16,maxWidth:500}}>
+        <div style={{position:"relative",flex:1}}>
+          <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",fontSize:16,color:C.inkLt}}>📷</span>
+          <input ref={scanRef} value={scanCode} onChange={e=>setScanCode(e.target.value)}
+            onKeyDown={handleScan}
+            placeholder="Escaneie o código de barras do comprovante..."
+            style={{width:"100%",background:C.surface,border:`1.5px solid ${C.gold}`,borderRadius:8,color:C.ink,padding:"10px 14px 10px 40px",fontSize:13,outline:"none"}}/>
+        </div>
+        <input value={search} onChange={e=>setSearch(e.target.value)}
+          placeholder="Buscar por cliente, vendedor..."
+          style={{flex:1,background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.ink,padding:"10px 14px",fontSize:13,outline:"none"}}/>
+      </div>
+
+      {/* Sales list */}
+      {filtered.length===0
+        ?<Card style={{textAlign:"center",color:C.inkFt,padding:40}}>Nenhuma venda encontrada.</Card>
         :<div style={{display:"grid",gap:8}}>
-          {sales.map(s=>(
-            <Card key={s.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
-              <div>
-                <div style={{fontWeight:600,fontSize:13.5}}>
-                  {s.clientName}
-                  {s.isWholesale&&<span style={{marginLeft:6,fontSize:10.5,color:C.purple,background:C.purpleLt,padding:"1px 6px",borderRadius:8}}>Atacado</span>}
-                  {s.withNFe&&<span style={{marginLeft:6,fontSize:10.5,color:C.gold,background:C.goldLt,padding:"1px 6px",borderRadius:8}}>NF-e {s.nfeNum}</span>}
+          {filtered.map(s=>{
+            const cancelled=s.status==="cancelada";
+            return(
+              <div key={s.id} onClick={()=>{setSelSale(s);setView("detail");}}
+                style={{background:cancelled?"#FFF8F8":C.surface,border:`1.5px solid ${cancelled?C.red:C.border}`,borderRadius:12,padding:"14px 18px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10,transition:"border-color .12s",opacity:cancelled?.7:1}}
+                onMouseEnter={e=>{if(!cancelled)e.currentTarget.style.borderColor=C.gold;}}
+                onMouseLeave={e=>{e.currentTarget.style.borderColor=cancelled?C.red:C.border;}}>
+                <div>
+                  <div style={{fontWeight:600,fontSize:13.5,display:"flex",alignItems:"center",gap:8}}>
+                    {(s.clientName||"Avulso").replace(/^[\d.\s]+/,"")}
+                    {s.isWholesale&&<span style={{fontSize:10.5,color:C.purple,background:C.purpleLt,padding:"1px 6px",borderRadius:8}}>Atacado</span>}
+                    {cancelled&&<span style={{fontSize:10.5,color:C.red,background:"#FFF0F0",padding:"1px 6px",borderRadius:8}}>Cancelada</span>}
+                    {s.withNFe&&<span style={{fontSize:10.5,color:C.gold,background:C.goldLt,padding:"1px 6px",borderRadius:8}}>NF-e</span>}
+                  </div>
+                  <div style={{fontSize:12,color:C.inkLt,marginTop:2}}>{fmtD(s.date)} · {s.seller} · {s.items?.length} item(s) · {s.sale_mode==="galpao"?"Galpão":s.sale_mode==="online"?"Online":"Balcão"}</div>
                 </div>
-                <div style={{fontSize:12,color:C.inkLt}}>{fmtD(s.date)} · {s.seller} · {s.items?.length} item(s)</div>
+                <div style={{textAlign:"right",display:"flex",alignItems:"center",gap:12}}>
+                  <div>
+                    <div className="cor" style={{fontSize:22,color:cancelled?C.inkLt:C.green}}>{fmt(s.total)}</div>
+                    <Badge color={mc[s.paymentMethod]||C.inkMd}>{s.paymentMethod}</Badge>
+                  </div>
+                  <span style={{fontSize:18,color:C.inkFt}}>›</span>
+                </div>
               </div>
-              <div style={{textAlign:"right"}}>
-                <div className="cor" style={{fontSize:22,color:C.green}}>{fmt(s.total)}</div>
-                <Badge color={mc[s.paymentMethod]||C.inkMd}>{s.paymentMethod}</Badge>
-              </div>
-            </Card>
-          ))}
+            );
+          })}
         </div>}
     </div>
   );
