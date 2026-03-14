@@ -886,7 +886,9 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
     </div>
   );
 
-  const filteredProds=products.filter(p=>
+
+
+    const filteredProds=products.filter(p=>
     p.name.toLowerCase().includes(prodSearch.toLowerCase())||
     (p.sku||"").toLowerCase().includes(prodSearch.toLowerCase())
   );
@@ -905,6 +907,97 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
     showToast(pickerProd.name+" ("+pickerSz+") ×"+qty+" adicionado");
     setPickerProd(null);setPickerSz(null);setPickerQty(1);
   };
+
+  // ── STEP: PAGAR ──
+  if(step==="pagar"){
+    const paidSoFar=payments.reduce((a,b)=>a+b.amount,0);
+    const remaining=Math.max(0,total-paidSoFar);
+    const done=paidSoFar>=total-0.009;
+    const addPayment=(method,amount)=>{
+      const n=parseFloat(String(amount).replace(",","."));
+      if(!n||n<=0){showToast("Valor inválido","error");return;}
+      if(n>remaining+0.01){showToast("Valor maior que o restante","error");return;}
+      setPayments(p=>[...p,{method,amount:n}]);
+      setPayAmt("");
+    };
+    return(
+      <div className="fu" style={{maxWidth:520}}>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:24}}>
+          <button onClick={()=>setStep("sale")} style={{background:"none",border:"none",color:C.inkMd,cursor:"pointer",fontSize:22}}>←</button>
+          <div>
+            <div className="cor" style={{fontSize:26}}>Pagamento</div>
+            <div style={{fontSize:13,color:C.inkLt}}>{(selClient?.name||"Avulso").replace(/^[\d.\s]+/,"")}</div>
+          </div>
+        </div>
+        <Card style={{marginBottom:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:C.inkMd,marginBottom:3}}><span>Subtotal</span><span>{fmt(subtotal)}</span></div>
+          {freightPrice>0&&<div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:C.blue,marginBottom:3}}><span>Frete</span><span>{fmt(freightPrice)}</span></div>}
+          <HR m="8px 0 10px"/>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div className="cor" style={{fontSize:32,color:C.green}}>{fmt(total)}</div>
+            {paidSoFar>0&&<div style={{textAlign:"right"}}>
+              <div style={{fontSize:12,color:C.green}}>Pago: {fmt(paidSoFar)}</div>
+              <div style={{fontSize:14,fontWeight:700,color:remaining>0.01?C.red:C.green}}>Restante: {fmt(remaining)}</div>
+            </div>}
+          </div>
+        </Card>
+        {payments.length>0&&(
+          <Card style={{marginBottom:12}}>
+            <SectionTitle>Pagamentos</SectionTitle>
+            {payments.map((p,i)=>(
+              <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
+                <span style={{fontSize:13,color:C.inkMd}}>{p.method==="dinheiro"?"💵 Dinheiro":p.method==="pix"?"⚡ PIX":p.method==="cartao"?"💳 Cartão":"📄 Boleto"}</span>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <span style={{fontWeight:600,color:C.green}}>{fmt(p.amount)}</span>
+                  <button onClick={()=>setPayments(prev=>prev.filter((_,j)=>j!==i))} style={{background:C.redLt,border:"none",color:C.red,width:22,height:22,borderRadius:4,cursor:"pointer",fontSize:12}}>×</button>
+                </div>
+              </div>
+            ))}
+          </Card>
+        )}
+        {!done&&(
+          <Card style={{marginBottom:12}}>
+            <SectionTitle>Adicionar pagamento</SectionTitle>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+              {[{id:"dinheiro",l:"💵 Dinheiro"},{id:"pix",l:"⚡ PIX"},{id:"cartao",l:"💳 Cartão"},{id:"boleto",l:"📄 Boleto"}].map(o=>(
+                <button key={o.id} onClick={()=>setPayMethod(o.id)} style={{padding:"10px",borderRadius:7,border:`1.5px solid ${payMethod===o.id?C.gold:C.border}`,background:payMethod===o.id?C.goldLt:"transparent",color:payMethod===o.id?C.gold:C.inkMd,cursor:"pointer",fontSize:13,fontWeight:payMethod===o.id?600:400}}>{o.l}</button>
+              ))}
+            </div>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <input type="text" inputMode="decimal" value={payAmt}
+                onChange={e=>setPayAmt(e.target.value)}
+                onKeyDown={e=>e.key==="Enter"&&addPayment(payMethod,payAmt||remaining)}
+                placeholder={fmt(remaining)}
+                style={{flex:1,background:C.hover,border:`1px solid ${C.border}`,borderRadius:6,color:C.ink,padding:"9px 12px",fontSize:15,outline:"none",fontWeight:600}}/>
+              <Btn v="ghost" sz="sm" onClick={()=>setPayAmt(String(remaining).replace(".",","))}>Tudo</Btn>
+              <Btn v="gold" onClick={()=>addPayment(payMethod,payAmt||remaining)}>+ Add</Btn>
+            </div>
+            {payMethod==="dinheiro"&&payAmt&&parseFloat(String(payAmt).replace(",","."))-remaining>0&&(
+              <div style={{marginTop:8,fontSize:12.5,color:C.green}}>Troco: {fmt(parseFloat(String(payAmt).replace(",","."))-remaining)}</div>
+            )}
+          </Card>
+        )}
+        {done&&(
+          <div style={{background:C.greenLt,borderRadius:10,padding:"14px 18px",marginBottom:12,display:"flex",alignItems:"center",gap:10}}>
+            <span style={{fontSize:24}}>✅</span>
+            <div>
+              <div style={{fontWeight:700,color:C.green}}>Pagamento completo!</div>
+              {payments.some(p=>p.method==="dinheiro")&&<div style={{fontSize:13,color:C.green}}>Troco: {fmt(Math.max(0,paidSoFar-total))}</div>}
+            </div>
+          </div>
+        )}
+        <Btn v="success" onClick={()=>{
+          if(!done){showToast("Adicione pagamento suficiente","error");return;}
+          const mainMethod=payments[0]?.method||"dinheiro";
+          const mainPaid=paidSoFar;
+          setPaid(mainPaid);setPayMethod(mainMethod);
+          finalize();
+        }} full sz="lg" disabled={saving||!done}>{saving?"Salvando...":"✅ Confirmar e Finalizar"}</Btn>
+      </div>
+    );
+  }
+
+
 
   return(
     <div className="fu">
@@ -1099,6 +1192,8 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
       </div>
 
       {/* RECEIPT */}
+
+
       {receipt&&(
         <div style={{position:"fixed",top:0,left:0,width:"100vw",height:"100vh",background:"rgba(26,23,20,.65)",backdropFilter:"blur(4px)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",paddingLeft:"200px"}}>
           <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,width:"92%",maxWidth:540,maxHeight:"92vh",overflowY:"auto",boxShadow:"0 24px 80px rgba(0,0,0,.28)"}}>
@@ -1838,13 +1933,13 @@ function Products({products,setProducts,setStkG,setStkL,sales,showToast,logActiv
 function StockPage({title,loc,stock,setStock,products,addMov,showToast,table,logActivity}){
   const [selProd,setSelProd]=useState(null);
   const [type,setType]=useState("entrada");
-  const [qtys,setQtys]=useState({});  // {sz: qty}
+  const [qtys,setQtys]=useState({});
   const [obs,setObs]=useState("");
   const [saving,setSaving]=useState(false);
-  const [payStep,setPayStep]=useState(0);   // payment wizard step
-  const [payments,setPayments]=useState([]); // [{method, amount}]
-  const [payAmt,setPayAmt]=useState("");     // current payment amount input
   const [search,setSearch]=useState("");
+  const [importing,setImporting]=useState(false);
+  const [importPreview,setImportPreview]=useState(null); // [{sku,name,sz,qty,pId,stk_id}]
+  const importRef=useRef();
   const getQty=(pId,sz)=>stock.find(s=>s.pId===pId&&s.sz===sz)?.qty||0;
 
   const handleSubmit=async()=>{
@@ -1875,12 +1970,170 @@ function StockPage({title,loc,stock,setStock,products,addMov,showToast,table,log
     setSaving(false);
   };
 
+  // ── IMPORT FROM EXCEL ──
+  const handleImportFile=async(e)=>{
+    const file=e.target.files[0];
+    if(!file)return;
+    e.target.value="";
+    setImporting(true);
+    try{
+      // Read file as ArrayBuffer
+      const buf=await file.arrayBuffer();
+      const bytes=new Uint8Array(buf);
+
+      // Parse XLSX manually (basic) — find the correct sheet tab
+      // We'll use a simpler approach: read as text and parse CSV if .csv, or use SheetJS CDN
+      // Since SheetJS isn't loaded, parse using a fetch trick
+      // Actually we'll inject SheetJS dynamically
+      if(!window.XLSX){
+        await new Promise((res,rej)=>{
+          const s=document.createElement("script");
+          s.src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+          s.onload=res; s.onerror=rej;
+          document.head.appendChild(s);
+        });
+      }
+      const wb=window.XLSX.read(bytes,{type:"array"});
+
+      // Determine which sheet to use based on loc (galpao or loja)
+      const sheetName=wb.SheetNames.find(n=>
+        (loc==="loja"&&n.toLowerCase().includes("loja"))||
+        (loc==="galpao"&&(n.toLowerCase().includes("galp")||n.toLowerCase().includes("galpão")))
+      )||wb.SheetNames[0];
+
+      const ws=wb.Sheets[sheetName];
+      const rows=window.XLSX.utils.sheet_to_json(ws,{defval:""});
+
+      // Expected columns: SKU, PRODUTO, TAMANHO, QTD CONTADA
+      const preview=[];
+      for(const row of rows){
+        const sku=String(row["SKU"]||row["sku"]||"").trim();
+        const sz=String(row["TAMANHO"]||row["Tamanho"]||row["TAM"]||"").trim();
+        const rawQty=row["QTD CONTADA"]||row["QTD"]||row["QUANTIDADE"]||row["Quantidade"]||"";
+        if(!sku||!sz||rawQty==="")continue;
+        const qty=parseInt(String(rawQty),10);
+        if(isNaN(qty))continue;
+
+        // Match product
+        const prod=products.find(p=>(p.sku||"").toLowerCase()===sku.toLowerCase());
+        if(!prod){preview.push({sku,sz,qty,name:"❓ Produto não encontrado",pId:null,warn:true});continue;}
+
+        const existingStk=stock.find(s=>s.pId===prod.id&&s.sz===sz);
+        preview.push({
+          sku,sz,qty,
+          name:prod.name,
+          pId:prod.id,
+          stk_id:existingStk?._id||null,
+          cur:existingStk?.qty||0,
+          warn:false,
+        });
+      }
+      if(preview.length===0){showToast("Nenhuma linha válida encontrada na planilha","error");setImporting(false);return;}
+      setImportPreview(preview);
+    }catch(err){showToast("Erro ao ler arquivo: "+err.message,"error");}
+    setImporting(false);
+  };
+
+  const confirmImport=async()=>{
+    const valid=importPreview.filter(r=>!r.warn);
+    if(valid.length===0){showToast("Nenhum item válido para importar","error");return;}
+    setSaving(true);
+    let count=0;
+    try{
+      for(const row of valid){
+        const{pId,sz,qty,stk_id,name}=row;
+        if(stk_id){
+          await sb.from(table).update({qty}).eq("id",stk_id);
+        }else{
+          const{data}=await sb.from(table).insert({product_id:pId,size:sz,qty}).select().single();
+          if(data)setStock(prev=>[...prev,{pId,sz,qty,_id:data.id}]);
+        }
+        setStock(prev=>{
+          const idx=prev.findIndex(s=>s.pId===pId&&s.sz===sz);
+          if(idx>=0){const u=[...prev];u[idx]={...u[idx],qty};return u;}
+          return prev;
+        });
+        count++;
+      }
+      await addMov({type:"contagem",loc,desc:`Contagem importada — ${count} registros`});
+      await logActivity("contagem",`Importação de contagem — ${count} itens — ${title}`);
+      showToast(`✅ ${count} registros atualizados com sucesso!`);
+      setImportPreview(null);
+    }catch(err){showToast("Erro na importação: "+err.message,"error");}
+    setSaving(false);
+  };
+
   const filtered=[...products].sort((a,b)=>a.name.localeCompare(b.name))
     .filter(p=>p.name.toLowerCase().includes(search.toLowerCase())||p.sku?.toLowerCase().includes(search.toLowerCase()));
 
   return(
     <div className="fu">
-      <PageHeader title={"Estoque — "+title} sub={stock.reduce((a,b)=>a+b.qty,0)+" peças total"}/>
+      <PageHeader title={"Estoque — "+title} sub={stock.reduce((a,b)=>a+b.qty,0)+" peças total"}
+        actions={[
+          <Btn key="imp" v="secondary" onClick={()=>importRef.current?.click()} disabled={importing}>
+            {importing?"Lendo...":"📥 Importar Contagem"}
+          </Btn>
+        ]}/>
+      <input ref={importRef} type="file" accept=".xlsx,.xls,.csv" style={{display:"none"}} onChange={handleImportFile}/>
+
+      {/* ── IMPORT PREVIEW MODAL ── */}
+      {importPreview&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div style={{background:C.surface,borderRadius:16,width:"min(780px,95vw)",maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 20px 60px rgba(0,0,0,.25)"}}>
+            {/* Header */}
+            <div style={{padding:"20px 24px",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:16}}>Prévia da Importação</div>
+                <div style={{fontSize:12,color:C.inkLt,marginTop:2}}>
+                  {importPreview.filter(r=>!r.warn).length} válidos &nbsp;·&nbsp;
+                  <span style={{color:C.red}}>{importPreview.filter(r=>r.warn).length} com problema</span>
+                </div>
+              </div>
+              <button onClick={()=>setImportPreview(null)} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:C.inkLt}}>×</button>
+            </div>
+
+            {/* Table */}
+            <div style={{overflowY:"auto",flex:1,padding:"0 24px"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+                <thead style={{position:"sticky",top:0,background:C.surface}}>
+                  <tr style={{borderBottom:`2px solid ${C.border}`}}>
+                    {["SKU","Produto","Tam","Atual","→ Novo","Status"].map(h=>(
+                      <th key={h} style={{padding:"10px 8px",textAlign:"left",fontSize:11,fontWeight:700,color:C.inkLt,letterSpacing:.5,textTransform:"uppercase"}}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {importPreview.map((r,i)=>(
+                    <tr key={i} style={{borderBottom:`1px solid ${C.border}`,background:r.warn?"#FFF5F5":"transparent"}}>
+                      <td style={{padding:"8px",fontWeight:600,color:C.inkMd,fontSize:12}}>{r.sku}</td>
+                      <td style={{padding:"8px",fontSize:13}}>{r.name}</td>
+                      <td style={{padding:"8px",textAlign:"center",fontWeight:700}}>{r.sz}</td>
+                      <td style={{padding:"8px",textAlign:"center",color:C.inkMd}}>{r.warn?"—":r.cur}</td>
+                      <td style={{padding:"8px",textAlign:"center",fontWeight:700,color:r.warn?C.red:r.qty!==(r.cur||0)?C.green:C.inkMd}}>{r.warn?"—":r.qty}</td>
+                      <td style={{padding:"8px"}}>
+                        {r.warn
+                          ?<span style={{fontSize:11,color:C.red,fontWeight:600}}>⚠️ Não encontrado</span>
+                          :r.qty===(r.cur||0)
+                            ?<span style={{fontSize:11,color:C.inkFt}}>Sem alteração</span>
+                            :<span style={{fontSize:11,color:C.green,fontWeight:600}}>✓ Atualizar</span>
+                        }
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Footer */}
+            <div style={{padding:"16px 24px",borderTop:`1px solid ${C.border}`,display:"flex",justifyContent:"flex-end",gap:10}}>
+              <Btn v="ghost" onClick={()=>setImportPreview(null)}>Cancelar</Btn>
+              <Btn v="success" onClick={confirmImport} disabled={saving||importPreview.filter(r=>!r.warn).length===0}>
+                {saving?"Salvando...":"✅ Confirmar e Atualizar Estoque"}
+              </Btn>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div style={{display:"grid",gridTemplateColumns:"1fr 380px",gap:16,alignItems:"start"}}>
 
@@ -1909,7 +2162,6 @@ function StockPage({title,loc,stock,setStock,products,addMov,showToast,table,log
                       <div style={{fontSize:10,color:C.inkFt}}>peças</div>
                     </div>
                   </div>
-                  {/* Size chips — always visible */}
                   <div style={{display:"flex",flexWrap:"wrap",gap:5,marginTop:6}}>
                     {ps.sort((a,b)=>a.sz.localeCompare(b.sz,undefined,{numeric:true})).map(s=>(
                       <div key={s.sz} style={{textAlign:"center",background:s.qty<=3?"#FFF0F0":C.hover,border:`1px solid ${s.qty<=3?C.red:C.border}`,borderRadius:6,padding:"3px 9px",minWidth:44}}>
@@ -1942,7 +2194,6 @@ function StockPage({title,loc,stock,setStock,products,addMov,showToast,table,log
                 <button onClick={()=>{setSelProd(null);setQtys({});}} style={{background:"none",border:"none",cursor:"pointer",color:C.inkLt,fontSize:18}}>×</button>
               </div>
 
-              {/* Entrada / Saída toggle */}
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
                 {[["entrada","✅ Entrada","green"],["saida","📤 Saída","red"]].map(([val,lbl,col])=>(
                   <button key={val} onClick={()=>setType(val)} style={{padding:"10px",borderRadius:8,border:`1.5px solid ${type===val?C[col]:C.border}`,background:type===val?C[col+"Lt"]:"transparent",color:type===val?C[col]:C.inkMd,cursor:"pointer",fontWeight:600,fontSize:13.5}}>
@@ -1951,7 +2202,6 @@ function StockPage({title,loc,stock,setStock,products,addMov,showToast,table,log
                 ))}
               </div>
 
-              {/* Shopify-style variant table */}
               <div style={{marginBottom:12}}>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 80px",gap:6,padding:"6px 8px",background:C.hover,borderRadius:6,marginBottom:6}}>
                   <div style={{fontSize:10.5,fontWeight:700,color:C.inkLt,letterSpacing:.5}}>TAMANHO</div>
@@ -2259,41 +2509,160 @@ function Sales({sales,issuedNFe}){
 
 // ── LABELS ─────────────────────────────────────────────────────────────────
 function Labels({products}){
-  const [selProd,setSelProd]=useState(products[0]?.id||"");
-  const [selSz,setSelSz]=useState("");const [qty,setQty]=useState(1);const [labels,setLabels]=useState([]);
-  const product=products.find(p=>p.id===Number(selProd));
-  useEffect(()=>{if(product?.sizes?.[0])setSelSz(product.sizes[0]);},[selProd]);
-  const generate=()=>{if(!product||!selSz)return;setLabels(Array.from({length:Math.min(50,qty)},(_,i)=>({id:`${uid()}-${i}`,product,size:selSz,barcode:`${product.sku}|${selSz}`})));};
+  const [selIds,setSelIds]=useState([]);
+  const [qty,setQty]=useState(1);
+  const [search,setSearch]=useState("");
+
+  const toggle=(id)=>setSelIds(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
+  const selAll=()=>setSelIds(filtered.map(p=>p.id));
+  const clearAll=()=>setSelIds([]);
+
+  const filtered=products.filter(p=>
+    p.name.toLowerCase().includes(search.toLowerCase())||
+    (p.sku||"").toLowerCase().includes(search.toLowerCase())
+  );
+
+  const printLabels=()=>{
+    const sel=products.filter(p=>selIds.includes(p.id));
+    if(sel.length===0){return;}
+    // Each product generates qty labels, one per size variant per qty
+    const labels=[];
+    sel.forEach(p=>{
+      for(let q=0;q<qty;q++){
+        (p.sizes||[""]).forEach(sz=>{
+          labels.push({name:p.name,sku:p.sku,sz,price:p.retailPrice,cat:p.cat});
+        });
+      }
+    });
+
+    // Layout: 3 columns x 8 rows = 24 per A4 page (Pimaco 6080 style)
+    const cols=3, rows=8;
+    const pages=[];
+    for(let i=0;i<labels.length;i+=cols*rows){
+      pages.push(labels.slice(i,i+cols*rows));
+    }
+
+    const w=window.open("","_blank","width=900,height=700");
+    const pageHtml=pages.map(page=>{
+      const cells=page.map(l=>`
+        <div class="label">
+          <div class="brand">THE COTT</div>
+          <div class="name">${l.name}</div>
+          <div class="sz-price">
+            <span class="sz">TAM: ${l.sz||"UN"}</span>
+            <span class="price">R$ ${l.price?.toFixed(2).replace(".",",")||"0,00"}</span>
+          </div>
+          <svg class="barcode" data-sku="${l.sku||""}"></svg>
+          <div class="sku">${l.sku||""}</div>
+        </div>`).join("");
+      // Pad to full page
+      const empty=cols*rows-page.length;
+      const empties=Array(empty).fill('<div class="label empty"></div>').join("");
+      return `<div class="page">${cells}${empties}</div>`;
+    }).join("");
+
+    w.document.write(`<!DOCTYPE html><html><head><title>Etiquetas — The Cott</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.5/JsBarcode.all.min.js"><\/script>
+    <style>
+      *{box-sizing:border-box;margin:0;padding:0}
+      body{font-family:'Arial Narrow',Arial,sans-serif;background:#fff}
+      .page{
+        width:210mm;min-height:297mm;
+        display:grid;
+        grid-template-columns:repeat(3,1fr);
+        grid-template-rows:repeat(8,35mm);
+        padding:10mm 5mm;
+        gap:0;
+        page-break-after:always;
+      }
+      .label{
+        border:0.3mm dashed #ccc;
+        padding:2mm 3mm;
+        display:flex;flex-direction:column;align-items:center;justify-content:center;
+        text-align:center;overflow:hidden;
+      }
+      .label.empty{border:0.3mm dashed #eee;}
+      .brand{font-size:7pt;font-weight:700;letter-spacing:2px;color:#888;margin-bottom:1mm}
+      .name{font-size:7.5pt;font-weight:700;line-height:1.2;margin-bottom:1mm;max-height:14pt;overflow:hidden}
+      .sz-price{display:flex;justify-content:space-between;width:100%;font-size:7pt;margin-bottom:1mm}
+      .sz{font-weight:700;color:#333}
+      .price{font-weight:700;color:#1a1714}
+      .barcode{width:100%;height:10mm}
+      .sku{font-size:6pt;color:#aaa;margin-top:0.5mm}
+      @media print{
+        @page{size:A4;margin:0}
+        body{margin:0}
+        .page{padding:10mm 5mm;page-break-after:always}
+      }
+    </style></head><body>
+    ${pageHtml}
+    <script>
+      document.querySelectorAll("svg.barcode").forEach(el=>{
+        const sku=el.getAttribute("data-sku");
+        if(sku){
+          try{JsBarcode(el,sku,{format:"CODE128",width:1.2,height:28,displayValue:false,margin:0});}
+          catch(e){el.style.display="none";}
+        }
+      });
+      setTimeout(()=>window.print(),800);
+    <\/script>
+    </body></html>`);
+    w.document.close();
+  };
+
   return(
     <div className="fu">
-      <PageHeader title="Etiquetas" sub="Code 128 — compatível com leitores USB"
-        actions={labels.length>0?[<Btn key="p" onClick={()=>window.print()} v="secondary">🖨️ Imprimir</Btn>]:[]}/>
-      <Card style={{maxWidth:480,marginBottom:24}}>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          <Fld label="Produto" value={selProd} onChange={v=>{setSelProd(v);setLabels([]);}} options={products.map(p=>({value:p.id,label:`${p.name} (${p.sku})`}))}/>
-          {product&&<Fld label="Tamanho" value={selSz} onChange={setSelSz} options={product.sizes?.map(s=>({value:s,label:s}))||[]}/>}
+      <PageHeader title="Etiquetas" sub={`${selIds.length} produto(s) selecionado(s)`}
+        actions={[
+          <Btn key="print" v="gold" onClick={printLabels} disabled={selIds.length===0}>🖨️ Imprimir Etiquetas</Btn>
+        ]}/>
+
+      <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:16,flexWrap:"wrap"}}>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar produto..."
+          style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,color:C.ink,padding:"8px 14px",fontSize:13,outline:"none",width:220}}/>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <span style={{fontSize:12.5,color:C.inkMd}}>Cópias por produto:</span>
+          <input type="number" min={1} max={10} value={qty} onChange={e=>setQty(Number(e.target.value))}
+            style={{width:52,background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,color:C.ink,padding:"6px 8px",fontSize:13,outline:"none",textAlign:"center"}}/>
         </div>
-        <Fld label="Quantidade (máx. 50)" value={qty} onChange={v=>setQty(Math.max(1,Math.min(50,Number(v))))} type="number"/>
-        <Btn onClick={generate} full sz="lg">Gerar Etiquetas</Btn>
-      </Card>
-      {labels.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:10}}>
-        {labels.map(l=>(
-          <div key={l.id} style={{background:"#fff",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px",width:230,textAlign:"center"}}>
-            <div style={{fontSize:11,fontWeight:700,marginBottom:2}}>{l.product.name}</div>
-            <div style={{fontSize:10,color:C.inkLt,marginBottom:6}}>{l.product.color} · Tam: {l.size}</div>
-            <div style={{display:"flex",justifyContent:"center",marginBottom:5}}><Barcode value={l.barcode} width={200} height={48}/></div>
-            <div style={{display:"flex",justifyContent:"space-between",fontSize:10.5,marginTop:4}}>
-              <span style={{color:C.inkLt}}>Varejo:</span>
-              <span style={{fontWeight:700,fontSize:13}}>{fmt(l.product.retailPrice)}</span>
+        <Btn v="ghost" sz="sm" onClick={selAll}>Selecionar todos</Btn>
+        <Btn v="ghost" sz="sm" onClick={clearAll}>Limpar</Btn>
+      </div>
+
+      <div style={{fontSize:11,color:C.inkLt,marginBottom:12}}>
+        Layout A4 · 3 colunas × 8 linhas = 24 etiquetas por folha · Compatível com Pimaco 6180/6080
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:10}}>
+        {filtered.map(p=>{
+          const sel=selIds.includes(p.id);
+          return(
+            <div key={p.id} onClick={()=>toggle(p.id)}
+              style={{background:sel?C.goldLt:C.surface,border:`1.5px solid ${sel?C.gold:C.border}`,borderRadius:10,padding:"12px 16px",cursor:"pointer",transition:"all .12s",display:"flex",alignItems:"center",gap:12}}>
+              <div style={{width:32,height:32,borderRadius:6,background:sel?C.gold:C.hover,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                {sel?<span style={{color:"#fff",fontWeight:700}}>✓</span>:<span style={{fontSize:11}}>{CAT_ICON[p.cat]||"📦"}</span>}
+              </div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:600,fontSize:13,color:sel?C.gold:C.ink,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.name}</div>
+                <div style={{fontSize:11,color:C.inkLt}}>{p.sku} · {p.sizes?.length||0} tamanhos</div>
+              </div>
             </div>
+          );
+        })}
+      </div>
+
+      {selIds.length>0&&(
+        <div style={{position:"fixed",bottom:24,right:24,background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 20px",boxShadow:"0 8px 30px rgba(0,0,0,.12)",display:"flex",alignItems:"center",gap:14}}>
+          <div style={{fontSize:13}}>
+            <strong>{selIds.length}</strong> produto(s) · <strong>{selIds.reduce((a,id)=>{const p=products.find(x=>x.id===id);return a+(p?.sizes?.length||1)*qty;},0)}</strong> etiquetas
           </div>
-        ))}
-      </div>}
+          <Btn v="gold" onClick={printLabels}>🖨️ Imprimir</Btn>
+        </div>
+      )}
     </div>
   );
 }
 
-// ── NF-e ───────────────────────────────────────────────────────────────────
 function NFe({sales,clients,issuedNFe,nfeConfig,saveNfeConfig,showToast,emitirNFe,logActivity}){
   const [selSale,setSelSale]=useState("");
   const [cfg,setCfg]=useState(nfeConfig);
@@ -2463,111 +2832,3 @@ ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 </script>
 </body>
 </html>
-  // ── STEP: PAGAR ──
-  if(step==="pagar"){
-    const paidSoFar=payments.reduce((a,b)=>a+b.amount,0);
-    const remaining=Math.max(0,total-paidSoFar);
-    const done=paidSoFar>=total;
-    const addPayment=(method,amount)=>{
-      if(amount<=0){showToast("Valor inválido","error");return;}
-      if(amount>remaining+0.01){showToast("Valor maior que o restante","error");return;}
-      setPayments(p=>[...p,{method,amount}]);
-      setPayAmt("");
-    };
-    return(
-      <div className="fu" style={{maxWidth:560}}>
-        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:24}}>
-          <button onClick={()=>setStep("sale")} style={{background:"none",border:"none",color:C.inkMd,cursor:"pointer",fontSize:22}}>←</button>
-          <div>
-            <div className="cor" style={{fontSize:26}}>Pagamento</div>
-            <div style={{fontSize:13,color:C.inkLt}}>{(selClient?.name||"Avulso").replace(/^[\d.\s]+/,"")}</div>
-          </div>
-        </div>
-
-        {/* Total breakdown */}
-        <Card style={{marginBottom:16}}>
-          <div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:C.inkMd,marginBottom:3}}><span>Subtotal</span><span>{fmt(subtotal)}</span></div>
-          {freightPrice>0&&<div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:C.blue,marginBottom:3}}><span>Frete</span><span>{fmt(freightPrice)}</span></div>}
-          <HR m="8px 0 10px"/>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div className="cor" style={{fontSize:32,color:C.green}}>{fmt(total)}</div>
-            {paidSoFar>0&&<div style={{textAlign:"right"}}>
-              <div style={{fontSize:12,color:C.green}}>Pago: {fmt(paidSoFar)}</div>
-              <div style={{fontSize:14,fontWeight:700,color:remaining>0?C.red:C.green}}>Restante: {fmt(remaining)}</div>
-            </div>}
-          </div>
-        </Card>
-
-        {/* Payments added so far */}
-        {payments.length>0&&(
-          <Card style={{marginBottom:12}}>
-            <SectionTitle>Pagamentos adicionados</SectionTitle>
-            {payments.map((p,i)=>(
-              <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
-                <span style={{fontSize:13,color:C.inkMd}}>{p.method==="dinheiro"?"💵 Dinheiro":p.method==="pix"?"⚡ PIX":p.method==="cartao"?"💳 Cartão":"📄 Boleto"}</span>
-                <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <span style={{fontWeight:600,color:C.green}}>{fmt(p.amount)}</span>
-                  <button onClick={()=>setPayments(prev=>prev.filter((_,j)=>j!==i))} style={{background:C.redLt,border:"none",color:C.red,width:22,height:22,borderRadius:4,cursor:"pointer",fontSize:12}}>×</button>
-                </div>
-              </div>
-            ))}
-          </Card>
-        )}
-
-        {/* Add payment */}
-        {!done&&(
-          <Card style={{marginBottom:12}}>
-            <SectionTitle>Adicionar pagamento</SectionTitle>
-            <div style={{marginBottom:10}}>
-              <div style={{fontSize:11,fontWeight:600,color:C.inkLt,letterSpacing:.5,marginBottom:8}}>FORMA DE PAGAMENTO</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                {[{id:"dinheiro",l:"💵 Dinheiro"},{id:"pix",l:"⚡ PIX"},{id:"cartao",l:"💳 Cartão"},{id:"boleto",l:"📄 Boleto"}].map(o=>(
-                  <button key={o.id} onClick={()=>setPayMethod(o.id)} style={{padding:"10px",borderRadius:7,border:`1.5px solid ${payMethod===o.id?C.gold:C.border}`,background:payMethod===o.id?C.goldLt:"transparent",color:payMethod===o.id?C.gold:C.inkMd,cursor:"pointer",fontSize:13,fontWeight:payMethod===o.id?600:400}}>{o.l}</button>
-                ))}
-              </div>
-            </div>
-            <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
-              <div style={{flex:1}}>
-                <div style={{fontSize:11,fontWeight:600,color:C.inkLt,letterSpacing:.5,marginBottom:5}}>VALOR</div>
-                <input type="text" inputMode="decimal" value={payAmt}
-                  onChange={e=>setPayAmt(e.target.value)}
-                  placeholder={fmt(remaining)}
-                  onKeyDown={e=>e.key==="Enter"&&addPayment(payMethod,parseFloat(String(payAmt).replace(",",".")))}
-                  style={{width:"100%",background:C.hover,border:`1px solid ${C.border}`,borderRadius:6,color:C.ink,padding:"9px 12px",fontSize:15,outline:"none",fontWeight:600}}/>
-              </div>
-              <Btn v="ghost" onClick={()=>setPayAmt(String(remaining).replace(".",","))}>Restante</Btn>
-              <Btn v="gold" onClick={()=>addPayment(payMethod,parseFloat(String(payAmt||remaining).replace(",",".")))}>+ Add</Btn>
-            </div>
-            {payMethod==="dinheiro"&&payAmt&&(
-              <div style={{marginTop:8,fontSize:12.5,color:C.green}}>
-                Troco: {fmt(Math.max(0,parseFloat(String(payAmt).replace(",","."))-remaining))}
-              </div>
-            )}
-          </Card>
-        )}
-
-        {done&&(
-          <div style={{background:C.greenLt,borderRadius:10,padding:"14px 18px",marginBottom:12,display:"flex",alignItems:"center",gap:10}}>
-            <span style={{fontSize:24}}>✅</span>
-            <div>
-              <div style={{fontWeight:700,color:C.green}}>Pagamento completo!</div>
-              {payments.some(p=>p.method==="dinheiro")&&(
-                <div style={{fontSize:13,color:C.green}}>Troco: {fmt(Math.max(0,paidSoFar-total))}</div>
-              )}
-            </div>
-          </div>
-        )}
-
-        <Btn v="success" onClick={()=>{
-          if(!done){showToast("Pagamento incompleto","error");return;}
-          // Simulate finalize with multi-payment
-          const mainMethod=payments[0]?.method||"dinheiro";
-          const mainPaid=payments[0]?.amount||total;
-          setPaid(mainPaid);setPayMethod(mainMethod);
-          finalize();
-        }} full sz="lg" disabled={saving||!done}>
-          {saving?"Salvando...":"✅ Confirmar e Finalizar Venda"}
-        </Btn>
-      </div>
-    );
-  }
