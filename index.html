@@ -58,18 +58,42 @@ const USERS=[
   {id:2,name:"Bia",     login:"bia",  pw:"0208bia",   role:"gerente"},
   {id:3,name:"Carol",   login:"carol",pw:"the123cott",role:"vendedora"},
 ];
+// ── CHANNELS (lojas/pontos de venda) ──
+const CHANNELS=[
+  {id:"galpao",   label:"Galpão",          icon:"🏭", color:"#4A7C5E",
+   saleMode:["galpao","online"],
+   tabs:["inicio","pdv","clientes","transfer","produtos","vendas","devolucoes","etiquetas","atividades","dashboard"]},
+  {id:"centro",   label:"The Cott Centro", icon:"🏪", color:"#C8973A",
+   saleMode:["balcao","whatsapp"],
+   tabs:["inicio","pdv","clientes","transfer","produtos","vendas","devolucoes","etiquetas","atividades","dashboard"]},
+];
+// Which channels each role can access
+const ROLE_CHANNELS={
+  admin:    ["galpao","centro"],
+  gerente:  ["galpao","centro"],
+  vendedora:["centro"],
+  galpao:   ["galpao"],
+};
 const ROLE_TABS={
-  admin:    ["inicio","pdv","clientes","galpao","loja","transfer","produtos","vendas","etiquetas","nfe","atividades","dashboard"],
-  gerente:  ["inicio","pdv","clientes","galpao","loja","transfer","produtos","vendas","etiquetas","dashboard"],
-  vendedora:["inicio","pdv","clientes"],
+  admin:    ["inicio","pdv","clientes","galpao","loja","transfer","produtos","vendas","devolucoes","etiquetas","nfe","atividades","dashboard"],
+  gerente:  ["inicio","pdv","clientes","galpao","loja","transfer","produtos","vendas","devolucoes","etiquetas","dashboard"],
+  vendedora:["inicio","pdv","clientes","vendas","devolucoes"],
   galpao:   ["inicio","galpao","loja","transfer","produtos","etiquetas"],
 };
+// Size sort order
+const SIZE_ORDER=["PP","P","M","G","GG","XG","XGG","XL","GG","34","36","38","40","42","44","46","48","50","52"];
+const sortSizes=(arr)=>[...arr].sort((a,b)=>{
+  const ia=SIZE_ORDER.indexOf(a)<0?99:SIZE_ORDER.indexOf(a);
+  const ib=SIZE_ORDER.indexOf(b)<0?99:SIZE_ORDER.indexOf(b);
+  if(ia!==ib)return ia-ib;
+  return a.localeCompare(b,undefined,{numeric:true});
+});
 const CATS=["Camiseta","Calça","Vestido","Blusa","Saia","Jaqueta","Bermuda","Shorts","Outro"];
 const CAT_PREFIX={"Camiseta":"CAM","Calça":"CAL","Vestido":"VES","Blusa":"BLU","Saia":"SAI","Jaqueta":"JAC","Bermuda":"BER","Shorts":"SHO","Outro":"OUT"};
 const CAT_ICON={"Camiseta":"👕","Calça":"👖","Vestido":"👗","Blusa":"👔","Saia":"🩱","Jaqueta":"🧥","Bermuda":"🩳","Shorts":"🩳","Outro":"📦"};
 const CAT_COLOR={"Camiseta":"#D4A574","Calça":"#7B9EA6","Vestido":"#C4A0B5","Blusa":"#A8C5A0","Saia":"#E8B4A0","Jaqueta":"#B0A8C8","Bermuda":"#9BBFB0","Shorts":"#C8B49A","Outro":"#B8B0A8"};
 const SIZES_NUM="34,36,38,40,42,44,46,48,50,52";
-const SIZES_LET="PP,P,M,G,GG,XG,XGG";
+const SIZES_LET="PP,P,M,G,GG,XG,XGG,XL";
 
 const fmt=v=>`R$ ${Number(v||0).toFixed(2).replace(".",",")}`;
 const fmtD=d=>new Date(d).toLocaleString("pt-BR");
@@ -247,6 +271,7 @@ function InlineTabs({tabs,active,onChange}){
 // ── APP ────────────────────────────────────────────────────────────────────
 function App(){
   const [user,setUser]=useState(null);
+  const [channel,setChannel]=useState(null); // "galpao" | "centro"
   const [tab,setTab]=useState("inicio");
   const [products,setProducts]=useState([]);
   const [stkG,setStkG]=useState([]);
@@ -324,15 +349,17 @@ function App(){
 
   const handleLogin=async(u)=>{
     setUser(u);
-    // register session
     try{await sb.from("sessions").insert({id:sessionId.current,user_login:u.login,active:true});}catch(e){}
     showToast(`Bem-vindo, ${u.name}.`);
+    // If user has only one channel, auto-select it
+    const avail=ROLE_CHANNELS[u.role]||[];
+    if(avail.length===1){setChannel(avail[0]);}
   };
 
   const handleLogout=async()=>{
     try{await sb.from("sessions").update({active:false}).eq("id",sessionId.current);}catch(e){}
     await logActivity("logout","Saiu do sistema");
-    setUser(null);
+    setUser(null);setChannel(null);
   };
 
   useEffect(()=>{if(user){loadAll();setTab("inicio");}
@@ -366,29 +393,75 @@ function App(){
 
   if(!user)return <Login onLogin={handleLogin}/>;
 
+  // Channel selector screen
+  const availChannels=CHANNELS.filter(ch=>(ROLE_CHANNELS[user.role]||[]).includes(ch.id));
+  if(!channel){
+    return(
+      <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center"}}>
+        <div style={{width:480,textAlign:"center"}}>
+          <div style={{marginBottom:32}}>
+            <div className="cor" style={{fontSize:42,letterSpacing:3,color:C.ink}}>MODO</div>
+            <div style={{fontSize:10,letterSpacing:4,color:C.inkFt,fontWeight:600,marginTop:2}}>GESTÃO FASHION</div>
+          </div>
+          <div style={{fontSize:13,color:C.inkLt,marginBottom:24}}>Olá, <strong>{user.name}</strong>. Selecione o ponto de venda:</div>
+          <div style={{display:"grid",gridTemplateColumns:availChannels.length===1?"1fr":"1fr 1fr",gap:16,marginBottom:32}}>
+            {availChannels.map(ch=>(
+              <button key={ch.id} onClick={()=>{setChannel(ch.id);loadAll();}}
+                style={{padding:"32px 20px",borderRadius:16,border:`2px solid ${C.border}`,background:C.surface,cursor:"pointer",textAlign:"center",transition:"all .2s"}}
+                onMouseEnter={e=>{e.currentTarget.style.borderColor=ch.color;e.currentTarget.style.background=ch.color+"18";e.currentTarget.style.transform="translateY(-3px)";}}
+                onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.background=C.surface;e.currentTarget.style.transform="";}}>
+                <div style={{fontSize:44,marginBottom:14}}>{ch.icon}</div>
+                <div style={{fontWeight:700,fontSize:18,color:C.ink,marginBottom:6}}>{ch.label}</div>
+                <div style={{fontSize:12,color:C.inkLt}}>{ch.id==="galpao"?"Venda Galpão · Online":"Venda Balcão · WhatsApp"}</div>
+              </button>
+            ))}
+          </div>
+          <button onClick={handleLogout} style={{background:"none",border:"none",color:C.inkLt,fontSize:12,cursor:"pointer"}}>← Sair</button>
+        </div>
+        <Toast msg={toast.msg} type={toast.type}/>
+      </div>
+    );
+  }
+
+  const curChannel=CHANNELS.find(c=>c.id===channel)||CHANNELS[0];
+
   const NAV=[
-    {id:"inicio",    label:"Início",       icon:"⌂"},
-    {id:"pdv",       label:"Venda",        icon:"◉"},
-    {id:"clientes",  label:"Clientes",     icon:"◎"},
-    {id:"galpao",    label:"Galpão",       icon:"◧"},
-    {id:"loja",      label:"Estoque Loja", icon:"◨"},
-    {id:"transfer",  label:"Transferência",icon:"⇌"},
-    {id:"produtos",  label:"Produtos",     icon:"◻"},
-    {id:"vendas",    label:"Vendas",       icon:"◈"},
-    {id:"etiquetas", label:"Etiquetas",    icon:"⊟"},
-    {id:"nfe",       label:"NF-e",         icon:"⊞"},
-    {id:"atividades",label:"Atividades",   icon:"◷"},
-    {id:"dashboard", label:"Dashboard",    icon:"▦"},
-  ].filter(n=>ROLE_TABS[user.role]?.includes(n.id));
+    {id:"inicio",     label:"Início",        icon:"⌂"},
+    {id:"pdv",        label:"Venda",         icon:"◉"},
+    {id:"clientes",   label:"Clientes",      icon:"◎"},
+    {id:"galpao",     label:"Est. Galpão",   icon:"◧"},
+    {id:"loja",       label:"Est. Loja",     icon:"◨"},
+    {id:"transfer",   label:"Transferência", icon:"⇌"},
+    {id:"produtos",   label:"Produtos",      icon:"◻"},
+    {id:"vendas",     label:"Vendas",        icon:"◈"},
+    {id:"devolucoes", label:"Devoluções",    icon:"↩"},
+    {id:"etiquetas",  label:"Etiquetas",     icon:"⊟"},
+    {id:"nfe",        label:"NF-e",          icon:"⊞"},
+    {id:"atividades", label:"Atividades",    icon:"◷"},
+    {id:"dashboard",  label:"Dashboard",     icon:"▦"},
+  ].filter(n=>{
+    // Must be in role tabs AND in channel tabs
+    const inRole=ROLE_TABS[user.role]?.includes(n.id);
+    const inChannel=curChannel.tabs.includes(n.id);
+    // galpao/loja stock pages: always show for admin/gerente regardless of channel
+    if(n.id==="galpao"||n.id==="loja")return inRole;
+    return inRole&&inChannel;
+  });
 
   return(
     <div className="app-layout" style={{display:"flex",minHeight:"100vh",background:C.bg}}>
       {/* SIDEBAR */}
       <aside className="sidebar no-print" style={{width:200,background:C.surface,borderRight:`1px solid ${C.border}`,
         position:"fixed",top:0,left:0,bottom:0,zIndex:100,display:"flex",flexDirection:"column",overflowY:"auto"}}>
-        <div style={{padding:"22px 20px 12px"}}>
-          <div className="cor" style={{fontSize:28,fontWeight:500,color:C.ink,letterSpacing:1}}>MODO</div>
-          <div style={{fontSize:9,color:C.inkFt,fontWeight:600,letterSpacing:3,marginTop:1}}>GESTÃO FASHION</div>
+        <div style={{padding:"16px 16px 10px"}}>
+          <div className="cor" style={{fontSize:26,fontWeight:500,color:C.ink,letterSpacing:1}}>MODO</div>
+          <div style={{fontSize:8,color:C.inkFt,fontWeight:600,letterSpacing:3,marginTop:1}}>GESTÃO FASHION</div>
+          <div style={{marginTop:8,padding:"6px 10px",borderRadius:8,background:curChannel.color+"20",border:`1px solid ${curChannel.color}40`,display:"flex",alignItems:"center",gap:6}}>
+            <span style={{fontSize:14}}>{curChannel.icon}</span>
+            <div style={{flex:1,overflow:"hidden"}}>
+              <div style={{fontSize:10,fontWeight:700,color:curChannel.color,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{curChannel.label}</div>
+            </div>
+          </div>
         </div>
         <HR m="0 14px 8px"/>
         <nav style={{flex:1,padding:"0 8px"}}>
@@ -406,8 +479,13 @@ function App(){
         </nav>
         <div style={{padding:"12px 16px",borderTop:`1px solid ${C.border}`}}>
           <div style={{fontSize:12,fontWeight:600,color:C.ink}}>{user.name}</div>
-          <div style={{fontSize:11,color:C.inkLt,marginBottom:8,textTransform:"capitalize"}}>{user.role}</div>
-          <button onClick={handleLogout} style={{background:"none",border:"none",color:C.inkLt,fontSize:12,cursor:"pointer"}}>Sair →</button>
+          <div style={{fontSize:11,color:C.inkLt,textTransform:"capitalize",marginBottom:6}}>{user.role}</div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            <button onClick={handleLogout} style={{background:"none",border:"none",color:C.inkLt,fontSize:12,cursor:"pointer"}}>Sair →</button>
+            {availChannels.length>1&&(
+              <button onClick={()=>{setChannel(null);setTab("inicio");}} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:5,color:C.inkMd,fontSize:11,cursor:"pointer",padding:"2px 7px"}}>⇄ Trocar</button>
+            )}
+          </div>
         </div>
       </aside>
 
@@ -415,16 +493,17 @@ function App(){
       <main className="main-content" style={{marginLeft:200,flex:1,padding:"32px 36px 80px",minHeight:"100vh"}}>
         {loading?<Loading/>:<>
           {tab==="inicio"    &&<Home setTab={setTab} user={user} products={products} stkG={stkG} stkL={stkL} sales={sales}/>}
-          {tab==="pdv"       &&<PDV stkG={stkG} setStkG={setStkG} stkL={stkL} setStkL={setStkL} products={products} clients={clients} setClients={setClients} setSales={setSales} addMov={addMov} showToast={showToast} user={user} logActivity={logActivity}/>}
+          {tab==="pdv"       &&<PDV stkG={stkG} setStkG={setStkG} stkL={stkL} setStkL={setStkL} products={products} clients={clients} setClients={setClients} setSales={setSales} addMov={addMov} showToast={showToast} user={user} logActivity={logActivity} channel={channel} curChannel={curChannel}/>}
           {tab==="clientes"  &&<Clients clients={clients} setClients={setClients} sales={sales} showToast={showToast} logActivity={logActivity}/>}
           {tab==="galpao"    &&<StockPage title="Galpão" loc="galpao" stock={stkG} setStock={setStkG} products={products} addMov={addMov} showToast={showToast} table="stock_galpao" logActivity={logActivity}/>}
           {tab==="loja"      &&<StockPage title="Loja" loc="loja" stock={stkL} setStock={setStkL} products={products} addMov={addMov} showToast={showToast} table="stock_loja" logActivity={logActivity}/>}
-          {tab==="transfer"  &&<Transfer stkG={stkG} setStkG={setStkG} stkL={stkL} setStkL={setStkL} products={products} addMov={addMov} showToast={showToast} logActivity={logActivity}/>}
+          {tab==="transfer"  &&<Transfer stkG={stkG} setStkG={setStkG} stkL={stkL} setStkL={setStkL} products={products} addMov={addMov} showToast={showToast} logActivity={logActivity} channel={channel}/>}
           {tab==="produtos"  &&<Products products={products} setProducts={setProducts} setStkG={setStkG} setStkL={setStkL} sales={sales} showToast={showToast} logActivity={logActivity}/>}
-          {tab==="vendas"    &&<Sales sales={sales} setSales={setSales} showToast={showToast} logActivity={logActivity} issuedNFe={issuedNFe} stkG={stkG} setStkG={setStkG} stkL={stkL} setStkL={setStkL} products={products} addMov={addMov}/>}
+          {tab==="vendas"    &&<Sales sales={sales} setSales={setSales} showToast={showToast} logActivity={logActivity} issuedNFe={issuedNFe} stkG={stkG} setStkG={setStkG} stkL={stkL} setStkL={setStkL} products={products} addMov={addMov} channel={channel}/>}
           {tab==="etiquetas" &&<Labels products={products}/>}
+          {tab==="devolucoes"&&<Devolucoes sales={sales} setSales={setSales} products={products} stkG={stkG} setStkG={setStkG} stkL={stkL} setStkL={setStkL} addMov={addMov} showToast={showToast} logActivity={logActivity} channel={channel}/>}
           {tab==="nfe"       &&<NFe sales={sales} clients={clients} issuedNFe={issuedNFe} nfeConfig={nfeConfig} saveNfeConfig={saveNfeConfig} showToast={showToast} emitirNFe={emitirNFe} logActivity={logActivity}/>}
-          {tab==="atividades"&&<Atividades activities={activities}/>}
+          {tab==="atividades"&&<Atividades activities={activities} channel={channel}/>}
           {tab==="dashboard" &&<Dashboard products={products} stkG={stkG} stkL={stkL} movements={movements} sales={sales}/>}
         </>}
       </main>
@@ -532,7 +611,7 @@ function Home({setTab,user,products,stkG,stkL,sales}){
 
 
 // ── PDV ────────────────────────────────────────────────────────────────────
-function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,addMov,showToast,user,logActivity}){
+function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,addMov,showToast,user,logActivity,channel,curChannel}){
   const [step,setStep]=useState("mode");
   const [saleMode,setSaleMode]=useState("balcao");
   const [clientMode,setClientMode]=useState(null);
@@ -793,20 +872,29 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
   if(step==="mode")return(
     <div className="fu" style={{maxWidth:500}}>
       <PageHeader title="Nova Venda" sub="Selecione a modalidade"/>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14}}>
-        {[{id:"balcao",icon:"🏪",label:"Venda Balcão",desc:"Loja física"},
-          {id:"galpao",icon:"🏭",label:"Venda Galpão",desc:"Estoque galpão"},
-          {id:"online",icon:"📦",label:"Venda Online",desc:"Entrega / frete"}].map(o=>(
-          <button key={o.id} onClick={()=>{setSaleMode(o.id);setStep("client");}}
-            style={{padding:"28px 16px",borderRadius:14,border:`1.5px solid ${C.border}`,background:C.surface,cursor:"pointer",textAlign:"center",transition:"all .18s"}}
-            onMouseEnter={e=>{e.currentTarget.style.borderColor=C.gold;e.currentTarget.style.background=C.goldLt;}}
-            onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.background=C.surface;}}>
-            <div style={{fontSize:36,marginBottom:10}}>{o.icon}</div>
-            <div style={{fontWeight:700,fontSize:14,marginBottom:4}}>{o.label}</div>
-            <div style={{fontSize:12,color:C.inkLt}}>{o.desc}</div>
-          </button>
-        ))}
-      </div>
+      {(()=>{
+        const modeOpts={
+          balcao:{icon:"🏪",label:"Venda Balcão",desc:"Loja física"},
+          galpao:{icon:"🏭",label:"Venda Galpão",desc:"Estoque galpão"},
+          online:{icon:"📦",label:"Venda Online",desc:"Entrega / frete"},
+          whatsapp:{icon:"📱",label:"Venda WhatsApp",desc:"Pedido remoto"},
+        };
+        const modes=(curChannel?.saleMode)||["balcao","online"];
+        return(
+          <div style={{display:"grid",gridTemplateColumns:`repeat(${modes.length},1fr)`,gap:14,maxWidth:modes.length===2?380:520}}>
+            {modes.map(id=>{const o=modeOpts[id]||{icon:"◉",label:id,desc:""};return(
+              <button key={id} onClick={()=>{setSaleMode(id);setStep("client");}}
+                style={{padding:"28px 16px",borderRadius:14,border:`1.5px solid ${C.border}`,background:C.surface,cursor:"pointer",textAlign:"center",transition:"all .18s"}}
+                onMouseEnter={e=>{e.currentTarget.style.borderColor=C.gold;e.currentTarget.style.background=C.goldLt;}}
+                onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.background=C.surface;}}>
+                <div style={{fontSize:36,marginBottom:10}}>{o.icon}</div>
+                <div style={{fontWeight:700,fontSize:14,marginBottom:4}}>{o.label}</div>
+                <div style={{fontSize:12,color:C.inkLt}}>{o.desc}</div>
+              </button>
+            );})}
+          </div>
+        );
+      })()}
     </div>
   );
 
@@ -1046,9 +1134,9 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,gap:8,flexWrap:"wrap"}}>
               <SectionTitle style={{marginBottom:0}}>Produtos</SectionTitle>
               <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                {isWholesale&&pickerProd&&pickerProd.sizes?.length>0&&(
+                {pickerProd&&sortSizes(pickerProd.sizes||[]).filter(sz=>getStk(pickerProd.id,sz)>0).length>0&&(
                   <button onClick={()=>{
-                    pickerProd.sizes.forEach(sz=>{
+                    sortSizes(pickerProd.sizes||[]).forEach(sz=>{
                       if(getStk(pickerProd.id,sz)>0){
                         setCart(prev=>{
                           const idx=prev.findIndex(c=>c.pId===pickerProd.id&&c.sz===sz);
@@ -1060,7 +1148,7 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
                     showToast("Grade completa adicionada!");
                     setPickerProd(null);setPickerSz(null);
                   }} style={{padding:"5px 10px",borderRadius:6,border:`1px solid ${C.purple}`,background:C.purpleLt,color:C.purple,cursor:"pointer",fontSize:12,fontWeight:600,whiteSpace:"nowrap"}}>
-                    📦 Seleção de grade
+                    📦 Grade completa
                   </button>
                 )}
                 <input value={prodSearch} onChange={e=>setProdSearch(e.target.value)}
@@ -2238,7 +2326,7 @@ function StockPage({title,loc,stock,setStock,products,addMov,showToast,table,log
                   <div style={{fontSize:10.5,fontWeight:700,color:C.inkLt,letterSpacing:.5}}>ATUAL</div>
                   <div style={{fontSize:10.5,fontWeight:700,color:C.inkLt,letterSpacing:.5}}>{type==="entrada"?"ENTRADA":"SAÍDA"}</div>
                 </div>
-                {selProd.sizes?.map(sz=>{
+                {sortSizes(selProd.sizes||[]).map(sz=>{
                   const cur=getQty(selProd.id,sz);
                   const q=Number(qtys[sz]||0);
                   const after=type==="entrada"?cur+q:cur-q;
@@ -2275,7 +2363,7 @@ function StockPage({title,loc,stock,setStock,products,addMov,showToast,table,log
 }
 
 // ── TRANSFER ───────────────────────────────────────────────────────────────
-function Transfer({stkG,setStkG,stkL,setStkL,products,addMov,showToast,logActivity}){
+function Transfer({stkG,setStkG,stkL,setStkL,products,addMov,showToast,logActivity,channel}){
   const [dir,setDir]=useState("g2l");
   const [selProd,setSelProd]=useState(null);
   const [qtys,setQtys]=useState({});
@@ -2449,7 +2537,7 @@ function Transfer({stkG,setStkG,stkL,setStkL,products,addMov,showToast,logActivi
                   <div style={{fontSize:10,fontWeight:700,color:C.inkLt,letterSpacing:.5}}>{dir==="g2l"?"LOJA":"GALPÃO"}</div>
                   <div style={{fontSize:10,fontWeight:700,color:C.gold,letterSpacing:.5}}>MOVER</div>
                 </div>
-                {selProd.sizes?.map(sz=>{
+                {sortSizes(selProd.sizes||[]).map(sz=>{
                   const qSrc=getQtySrc(selProd.id,sz);
                   const qDst=getQtyDst(selProd.id,sz);
                   const q=Number(qtys[sz]||0);
@@ -2868,6 +2956,179 @@ function Sales({sales,setSales,showToast,logActivity,issuedNFe,stkG,setStkG,stkL
     </div>
   );
 }
+
+
+// ── DEVOLUÇÕES ─────────────────────────────────────────────────────────────
+function Devolucoes({sales,setSales,products,stkG,setStkG,stkL,setStkL,addMov,showToast,logActivity,channel}){
+  const [search,setSearch]=useState("");
+  const [selSale,setSelSale]=useState(null);
+  const [selItems,setSelItems]=useState({}); // {itemIdx: qty}
+  const [reason,setReason]=useState("troca");
+  const [saving,setSaving]=useState(false);
+  const [scanCode,setScanCode]=useState("");
+  const scanRef=useRef();
+
+  useEffect(()=>{scanRef.current?.focus();},[]);
+
+  const handleScan=(e)=>{
+    if(e.key!=="Enter")return;
+    const code=scanCode.trim();setScanCode("");
+    if(!code)return;
+    const found=sales.find(s=>
+      s.id===code||
+      (s.id||"").replace(/-/g,"").substring(0,12).toUpperCase()===code.toUpperCase()
+    );
+    if(found&&found.status!=="cancelada"){setSelSale(found);setSelItems({});}
+    else if(found)showToast("Venda já cancelada","error");
+    else showToast("Venda não encontrada","error");
+  };
+
+  const activeSales=[...sales]
+    .filter(s=>s.status!=="cancelada")
+    .filter(s=>{
+      if(!search)return true;
+      const q=search.toLowerCase();
+      return (s.clientName||"").toLowerCase().includes(q)||(s.id||"").toLowerCase().includes(q);
+    })
+    .sort((a,b)=>new Date(b.date)-new Date(a.date))
+    .slice(0,50);
+
+  const processReturn=async()=>{
+    const items=Object.entries(selItems).filter(([,q])=>q>0);
+    if(items.length===0){showToast("Selecione ao menos 1 item","error");return;}
+    setSaving(true);
+    try{
+      const isGalpao=selSale.sale_mode==="galpao";
+      const table=isGalpao?"stock_galpao":"stock_loja";
+      const stk=isGalpao?stkG:stkL;
+      const setStk=isGalpao?setStkG:setStkL;
+
+      for(const [idxStr,qty] of items){
+        const idx=parseInt(idxStr);
+        const item=selSale.items[idx];
+        const prod=products.find(p=>p.name===item.name||p.id===item.pId);
+        if(!prod)continue;
+        const returnQty=Math.min(qty,item.qty);
+        const existing=stk.find(s=>s.pId===prod.id&&s.sz===item.sz);
+        const newQty=(existing?.qty||0)+returnQty;
+        if(existing?._id){
+          await sb.from(table).update({qty:newQty}).eq("id",existing._id);
+        }else{
+          const{data}=await sb.from(table).insert({product_id:prod.id,size:item.sz,qty:newQty}).select().single();
+          if(data)setStk(prev=>[...prev,{pId:prod.id,sz:item.sz,qty:newQty,_id:data.id}]);
+        }
+        setStk(prev=>{
+          const i=prev.findIndex(s=>s.pId===prod.id&&s.sz===item.sz);
+          if(i>=0){const u=[...prev];u[i]={...u[i],qty:newQty};return u;}
+          return prev;
+        });
+      }
+
+      // Mark sale as devolvida (partial or full)
+      const totalReturned=items.reduce((_,[,q])=>_+q,0);
+      const totalItems=selSale.items.reduce((a,i)=>a+i.qty,0);
+      const newStatus=totalReturned>=totalItems?"devolvida":"parcial";
+      await sb.from("sales").update({status:newStatus}).eq("id",selSale.id);
+      setSales(prev=>prev.map(s=>s.id===selSale.id?{...s,status:newStatus}:s));
+
+      await addMov({type:"devolucao",loc:isGalpao?"galpao":"loja",
+        desc:`Devolução ${reason} — ${(selSale.clientName||"Avulso").replace(/^[\d.\s]+/,"")} — ${totalReturned} peça(s)`});
+      await logActivity("devolucao",`Devolução (${reason}) — ${selSale.clientName||"Avulso"} — ${totalReturned} peça(s) devolvidas ao estoque`);
+      showToast(`✅ ${totalReturned} peça(s) devolvida(s) ao estoque!`);
+      setSelSale(null);setSelItems({});
+    }catch(err){showToast("Erro: "+err.message,"error");console.error(err);}
+    setSaving(false);
+  };
+
+  return(
+    <div className="fu">
+      <PageHeader title="Devoluções" sub="Registre trocas e devoluções de mercadoria"/>
+
+      {/* Barcode scan */}
+      <div style={{display:"flex",gap:10,marginBottom:20,maxWidth:600,flexWrap:"wrap"}}>
+        <div style={{position:"relative",flex:1,minWidth:220}}>
+          <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",fontSize:16}}>📷</span>
+          <input ref={scanRef} value={scanCode} onChange={e=>setScanCode(e.target.value)}
+            onKeyDown={handleScan} placeholder="Escaneie o código do comprovante..."
+            style={{width:"100%",background:C.surface,border:`1.5px solid ${C.gold}`,borderRadius:8,padding:"10px 14px 10px 40px",fontSize:13,outline:"none",color:C.ink}}/>
+        </div>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar por cliente..."
+          style={{flex:1,minWidth:180,background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 14px",fontSize:13,outline:"none",color:C.ink}}/>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:selSale?"1fr 380px":"1fr",gap:16,alignItems:"start"}}>
+
+        {/* LEFT — sales list */}
+        <div style={{display:"grid",gap:8}}>
+          {activeSales.length===0&&<Card style={{textAlign:"center",color:C.inkFt,padding:40}}>Nenhuma venda encontrada.</Card>}
+          {activeSales.map(s=>{
+            const sel=selSale?.id===s.id;
+            const status=s.status;
+            return(
+              <div key={s.id} onClick={()=>{setSelSale(sel?null:s);setSelItems({});}}
+                style={{background:sel?C.goldLt:C.surface,border:`1.5px solid ${sel?C.gold:status==="devolvida"?C.red:C.border}`,borderRadius:10,padding:"12px 16px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,transition:"all .12s"}}
+                onMouseEnter={e=>{if(!sel)e.currentTarget.style.borderColor=C.gold;}}
+                onMouseLeave={e=>{if(!sel)e.currentTarget.style.borderColor=status==="devolvida"?C.red:C.border;}}>
+                <div>
+                  <div style={{fontWeight:600,fontSize:13.5,display:"flex",alignItems:"center",gap:8}}>
+                    {(s.clientName||"Avulso").replace(/^[\d.\s]+/,"")}
+                    {status==="devolvida"&&<span style={{fontSize:10,background:"#FFF0F0",color:C.red,padding:"1px 6px",borderRadius:6,fontWeight:700}}>Devolvida</span>}
+                    {status==="parcial"&&<span style={{fontSize:10,background:"#FFF8E7",color:C.gold,padding:"1px 6px",borderRadius:6,fontWeight:700}}>Parcial</span>}
+                  </div>
+                  <div style={{fontSize:12,color:C.inkLt,marginTop:2}}>{fmtD(s.date)} · {s.items?.length} item(s)</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div className="cor" style={{fontSize:18,color:C.green}}>{fmt(s.total)}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* RIGHT — return panel */}
+        {selSale&&(
+          <div style={{position:"sticky",top:20}}>
+            <Card>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+                <div style={{fontWeight:700,fontSize:14}}>{(selSale.clientName||"Avulso").replace(/^[\d.\s]+/,"")}</div>
+                <button onClick={()=>{setSelSale(null);setSelItems({});}} style={{background:"none",border:"none",cursor:"pointer",color:C.inkLt,fontSize:18}}>×</button>
+              </div>
+
+              <SectionTitle>Motivo</SectionTitle>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+                {[["troca","🔄 Troca"],["devolucao","↩ Devolução"],["defeito","⚠️ Defeito"],["outro","📋 Outro"]].map(([v,l])=>(
+                  <button key={v} onClick={()=>setReason(v)} style={{padding:"8px",borderRadius:7,border:`1.5px solid ${reason===v?C.gold:C.border}`,background:reason===v?C.goldLt:"transparent",color:reason===v?C.gold:C.inkMd,cursor:"pointer",fontSize:12.5,fontWeight:reason===v?600:400}}>{l}</button>
+                ))}
+              </div>
+
+              <SectionTitle>Selecione os itens a devolver</SectionTitle>
+              <div style={{display:"grid",gap:8,marginBottom:14}}>
+                {selSale.items?.map((item,i)=>(
+                  <div key={i} style={{display:"grid",gridTemplateColumns:"1fr auto 70px",gap:8,alignItems:"center",padding:"8px",background:C.hover,borderRadius:7}}>
+                    <div>
+                      <div style={{fontSize:13,fontWeight:500}}>{item.name}</div>
+                      <div style={{fontSize:11,color:C.inkLt}}>Tam {item.sz} · Qtd orig.: {item.qty}</div>
+                    </div>
+                    <span style={{fontSize:12,color:C.inkLt}}>Devolver:</span>
+                    <input type="number" min="0" max={item.qty} value={selItems[i]||""}
+                      onChange={e=>setSelItems(p=>({...p,[i]:Number(e.target.value)}))}
+                      placeholder="0"
+                      style={{width:"100%",background:C.surface,border:`1px solid ${(selItems[i]||0)>0?C.gold:C.border}`,borderRadius:6,padding:"6px 8px",fontSize:14,fontWeight:700,textAlign:"center",outline:"none",color:C.ink}}/>
+                  </div>
+                ))}
+              </div>
+
+              <Btn v="success" onClick={processReturn} full disabled={saving}>
+                {saving?"Processando...":"↩ Confirmar Devolução"}
+              </Btn>
+            </Card>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 
 // ── LABELS ─────────────────────────────────────────────────────────────────
 function Labels({products}){
