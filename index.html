@@ -4,6 +4,7 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>MODO — Gestão Fashion</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚪</text></svg>"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
@@ -420,7 +421,7 @@ function App(){
           {tab==="loja"      &&<StockPage title="Loja" loc="loja" stock={stkL} setStock={setStkL} products={products} addMov={addMov} showToast={showToast} table="stock_loja" logActivity={logActivity}/>}
           {tab==="transfer"  &&<Transfer stkG={stkG} setStkG={setStkG} stkL={stkL} setStkL={setStkL} products={products} addMov={addMov} showToast={showToast} logActivity={logActivity}/>}
           {tab==="produtos"  &&<Products products={products} setProducts={setProducts} setStkG={setStkG} setStkL={setStkL} sales={sales} showToast={showToast} logActivity={logActivity}/>}
-          {tab==="vendas"    &&<Sales sales={sales} setSales={setSales} showToast={showToast} logActivity={logActivity} issuedNFe={issuedNFe}/>}
+          {tab==="vendas"    &&<Sales sales={sales} setSales={setSales} showToast={showToast} logActivity={logActivity} issuedNFe={issuedNFe} stkG={stkG} setStkG={setStkG} stkL={stkL} setStkL={setStkL} products={products} addMov={addMov}/>}
           {tab==="etiquetas" &&<Labels products={products}/>}
           {tab==="nfe"       &&<NFe sales={sales} clients={clients} issuedNFe={issuedNFe} nfeConfig={nfeConfig} saveNfeConfig={saveNfeConfig} showToast={showToast} emitirNFe={emitirNFe} logActivity={logActivity}/>}
           {tab==="atividades"&&<Atividades activities={activities}/>}
@@ -2495,19 +2496,22 @@ function Transfer({stkG,setStkG,stkL,setStkL,products,addMov,showToast,logActivi
 }
 
 // ── SALES ──────────────────────────────────────────────────────────────────
-function Sales({sales,setSales,showToast,logActivity,issuedNFe}){
-  const [view,setView]=useState("list"); // list | detail
+function Sales({sales,setSales,showToast,logActivity,issuedNFe,stkG,setStkG,stkL,setStkL,products,addMov}){
+  const [view,setView]=useState("list"); // list | detail | edit
   const [selSale,setSelSale]=useState(null);
   const [search,setSearch]=useState("");
   const [cancelling,setCancelling]=useState(false);
+  const [saving,setSaving]=useState(false);
   const [scanCode,setScanCode]=useState("");
+  const [editDiscount,setEditDiscount]=useState(0);
+  const [editPayMethod,setEditPayMethod]=useState("dinheiro");
+  const [editObs,setEditObs]=useState("");
   const scanRef=useRef();
 
-  // Auto-focus scan field
   useEffect(()=>{ if(view==="list")scanRef.current?.focus(); },[view]);
 
-  const total=sales.reduce((a,b)=>a+(b.total||0),0);
-  const byM=sales.reduce((a,s)=>{a[s.paymentMethod]=(a[s.paymentMethod]||0)+s.total;return a;},{});
+  const total=sales.filter(s=>s.status!=="cancelada").reduce((a,b)=>a+(b.total||0),0);
+  const byM=sales.filter(s=>s.status!=="cancelada").reduce((a,s)=>{a[s.paymentMethod]=(a[s.paymentMethod]||0)+s.total;return a;},{});
   const mc={dinheiro:C.gold,pix:C.green,cartao:C.blue,boleto:C.inkMd};
 
   const filtered=[...sales]
@@ -2521,29 +2525,81 @@ function Sales({sales,setSales,showToast,logActivity,issuedNFe}){
     })
     .sort((a,b)=>new Date(b.date)-new Date(a.date));
 
-  // Barcode scan — on Enter look for sale by ID
   const handleScan=(e)=>{
     if(e.key==="Enter"){
       const code=scanCode.trim();
       setScanCode("");
       if(!code)return;
-      const found=sales.find(s=>s.id===code||(s.id||"").startsWith(code));
+      const found=sales.find(s=>s.id===code||(s.id||"").startsWith(code)||
+        (s.id||"").replace(/-/g,"").substring(0,12).toUpperCase()===code.toUpperCase());
       if(found){setSelSale(found);setView("detail");}
       else showToast("Venda não encontrada: "+code,"error");
     }
   };
 
+  // ── CANCEL: restore stock ──
   const cancelSale=async(sale)=>{
-    if(!window.confirm(`Cancelar venda de ${fmt(sale.total)} para ${sale.clientName||"Avulso"}?`))return;
+    if(!window.confirm(`Cancelar venda de ${fmt(sale.total)} para ${sale.clientName||"Avulso"}?\n\nOs itens serão devolvidos ao estoque.`))return;
     setCancelling(true);
     try{
+      // 1. Mark as cancelled in DB
       await sb.from("sales").update({status:"cancelada"}).eq("id",sale.id);
       setSales(prev=>prev.map(s=>s.id===sale.id?{...s,status:"cancelada"}:s));
-      await logActivity("cancelamento",`Venda cancelada — ${sale.clientName||"Avulso"} — ${fmt(sale.total)}`);
-      showToast("Venda cancelada");
+
+      // 2. Restore stock — galpao or loja based on sale_mode
+      const isGalpao=sale.sale_mode==="galpao";
+      const table=isGalpao?"stock_galpao":"stock_loja";
+      const stk=isGalpao?stkG:stkL;
+      const setStk=isGalpao?setStkG:setStkL;
+
+      for(const item of (sale.items||[])){
+        const prod=products.find(p=>p.name===item.name||p.id===item.pId);
+        if(!prod)continue;
+        const existing=stk.find(s=>s.pId===prod.id&&s.sz===item.sz);
+        const newQty=(existing?.qty||0)+item.qty;
+        if(existing?._id){
+          await sb.from(table).update({qty:newQty}).eq("id",existing._id);
+        }else{
+          await sb.from(table).insert({product_id:prod.id,size:item.sz,qty:newQty});
+        }
+        setStk(prev=>{
+          const idx=prev.findIndex(s=>s.pId===prod.id&&s.sz===item.sz);
+          if(idx>=0){const u=[...prev];u[idx]={...u[idx],qty:newQty};return u;}
+          return [...prev,{pId:prod.id,sz:item.sz,qty:newQty,_id:existing?._id||null}];
+        });
+      }
+
+      await addMov({type:"cancelamento",loc:isGalpao?"galpao":"loja",desc:`Cancelamento venda — ${sale.clientName||"Avulso"} — ${fmt(sale.total)}`});
+      await logActivity("cancelamento",`Venda cancelada — ${sale.clientName||"Avulso"} — ${fmt(sale.total)} — estoque restaurado`);
+      showToast("Venda cancelada e estoque restaurado ✅");
       setView("list");setSelSale(null);
-    }catch(err){showToast("Erro: "+err.message,"error");}
+    }catch(err){showToast("Erro: "+err.message,"error");console.error(err);}
     setCancelling(false);
+  };
+
+  // ── SAVE EDIT ──
+  const saveEdit=async(sale)=>{
+    setSaving(true);
+    try{
+      const subtotal=(sale.items||[]).reduce((a,i)=>a+i.price*i.qty,0);
+      const discAmt=subtotal*(editDiscount/100);
+      const newTotal=Math.max(0,subtotal-discAmt+(sale.freightPrice||0));
+      const updates={
+        discount_pct:editDiscount,
+        discount_amt:discAmt,
+        total:newTotal,
+        payment_method:editPayMethod,
+        obs:editObs,
+      };
+      await sb.from("sales").update(updates).eq("id",sale.id);
+      const updated={...sale,...updates,discountPct:editDiscount,discountAmt:discAmt,total:newTotal,paymentMethod:editPayMethod};
+      setSales(prev=>prev.map(s=>s.id===sale.id?updated:s));
+      setSelSale(updated);
+      await logActivity("edicao_venda",`Venda editada — ${sale.clientName||"Avulso"} — ${fmt(newTotal)}`);
+      showToast("Venda atualizada ✅");
+      setView("detail");
+    }catch(err){showToast("Erro: "+err.message,"error");}
+    setSaving(false);
   };
 
   const printSaleReceipt=(s)=>{
@@ -2615,6 +2671,69 @@ function Sales({sales,setSales,showToast,logActivity,issuedNFe}){
     w.document.close();
   };
 
+  // ── EDIT VIEW ──
+  if(view==="edit"&&selSale){
+    const s=selSale;
+    const subtotal=(s.items||[]).reduce((a,i)=>a+i.price*i.qty,0);
+    const discAmt=subtotal*(editDiscount/100);
+    const previewTotal=Math.max(0,subtotal-discAmt+(s.freightPrice||0));
+    return(
+      <div className="fu" style={{maxWidth:560}}>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:24}}>
+          <button onClick={()=>setView("detail")} style={{background:"none",border:"none",color:C.inkMd,cursor:"pointer",fontSize:22}}>←</button>
+          <div className="cor" style={{fontSize:26}}>Editar Venda</div>
+        </div>
+
+        <Card style={{marginBottom:12}}>
+          <SectionTitle>Cliente e itens</SectionTitle>
+          <div style={{fontSize:13,color:C.inkMd,marginBottom:8}}>{(s.clientName||"Avulso").replace(/^[\d.\s]+/,"")}</div>
+          {(s.items||[]).map((item,i)=>(
+            <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:`1px solid ${C.border}`,fontSize:13}}>
+              <span>{item.name} — {item.sz} ×{item.qty}</span>
+              <span style={{color:C.inkMd}}>{fmt(item.price*item.qty)}</span>
+            </div>
+          ))}
+          <div style={{display:"flex",justifyContent:"space-between",fontWeight:600,padding:"8px 0",fontSize:14}}>
+            <span>Subtotal</span><span>{fmt(subtotal)}</span>
+          </div>
+        </Card>
+
+        <Card style={{marginBottom:12}}>
+          <SectionTitle>Desconto (%)</SectionTitle>
+          <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:8}}>
+            <input type="number" min="0" max="100" value={editDiscount}
+              onChange={e=>setEditDiscount(Number(e.target.value))}
+              style={{width:100,background:C.hover,border:`1px solid ${C.border}`,borderRadius:6,color:C.ink,padding:"8px 12px",fontSize:15,outline:"none",textAlign:"center",fontWeight:600}}/>
+            <span style={{fontSize:13,color:C.inkMd}}>%</span>
+            {editDiscount>0&&<span style={{fontSize:13,color:C.red}}>− {fmt(discAmt)}</span>}
+          </div>
+          <div style={{fontSize:11.5,color:C.inkLt}}>Desconto aplicado sobre o subtotal dos itens</div>
+        </Card>
+
+        <Card style={{marginBottom:12}}>
+          <SectionTitle>Forma de pagamento</SectionTitle>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            {[{id:"dinheiro",l:"💵 Dinheiro"},{id:"pix",l:"⚡ PIX"},{id:"cartao",l:"💳 Cartão"},{id:"boleto",l:"📄 Boleto"}].map(o=>(
+              <button key={o.id} onClick={()=>setEditPayMethod(o.id)} style={{padding:"10px",borderRadius:7,border:`1.5px solid ${editPayMethod===o.id?C.gold:C.border}`,background:editPayMethod===o.id?C.goldLt:"transparent",color:editPayMethod===o.id?C.gold:C.inkMd,cursor:"pointer",fontSize:13,fontWeight:editPayMethod===o.id?600:400}}>{o.l}</button>
+            ))}
+          </div>
+        </Card>
+
+        <Card style={{marginBottom:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span style={{fontSize:14,fontWeight:600}}>Novo total</span>
+            <div className="cor" style={{fontSize:28,color:C.green}}>{fmt(previewTotal)}</div>
+          </div>
+        </Card>
+
+        <div style={{display:"flex",gap:10}}>
+          <Btn v="ghost" onClick={()=>setView("detail")} full>Cancelar</Btn>
+          <Btn v="success" onClick={()=>saveEdit(selSale)} disabled={saving} full>{saving?"Salvando...":"✅ Salvar Alterações"}</Btn>
+        </div>
+      </div>
+    );
+  }
+
   // ── DETAIL VIEW ──
   if(view==="detail"&&selSale){
     const s=selSale;
@@ -2627,7 +2746,10 @@ function Sales({sales,setSales,showToast,logActivity,issuedNFe}){
             <div className="cor" style={{fontSize:26}}>Venda #{(s.id||"").substring(0,8).toUpperCase()}</div>
             <div style={{fontSize:13,color:C.inkLt}}>{fmtD(s.date)} · {s.seller}</div>
           </div>
-          {cancelled&&<span style={{background:"#FFF0F0",color:C.red,padding:"4px 12px",borderRadius:8,fontSize:12,fontWeight:700}}>CANCELADA</span>}
+          {cancelled
+            ?<span style={{background:"#FFF0F0",color:C.red,padding:"4px 12px",borderRadius:8,fontSize:12,fontWeight:700}}>CANCELADA</span>
+            :<Btn v="ghost" sz="sm" onClick={()=>{setEditDiscount(s.discountPct||0);setEditPayMethod(s.paymentMethod||"dinheiro");setEditObs(s.obs||"");setView("edit");}}>✏️ Editar</Btn>
+          }
         </div>
 
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
@@ -2635,12 +2757,12 @@ function Sales({sales,setSales,showToast,logActivity,issuedNFe}){
             <div style={{fontSize:11,color:C.inkLt,marginBottom:4,textTransform:"uppercase",letterSpacing:.5}}>Cliente</div>
             <div style={{fontWeight:600,fontSize:14}}>{(s.clientName||"Avulso").replace(/^[\d.\s]+/,"")}</div>
             {s.clientPhone&&<div style={{fontSize:12,color:C.inkLt}}>{s.clientPhone}</div>}
-            {s.isWholesale&&<Badge color={C.purple} style={{marginTop:4}}>Atacado</Badge>}
+            {s.isWholesale&&<Badge color={C.purple}>Atacado</Badge>}
           </Card>
           <Card>
             <div style={{fontSize:11,color:C.inkLt,marginBottom:4,textTransform:"uppercase",letterSpacing:.5}}>Pagamento</div>
             <div style={{fontWeight:600,fontSize:14,textTransform:"capitalize"}}>{s.paymentMethod}</div>
-            <div className="cor" style={{fontSize:22,color:C.green}}>{fmt(s.total)}</div>
+            <div className="cor" style={{fontSize:22,color:cancelled?C.inkLt:C.green}}>{fmt(s.total)}</div>
           </Card>
         </div>
 
@@ -2661,11 +2783,11 @@ function Sales({sales,setSales,showToast,logActivity,issuedNFe}){
               ))}
             </tbody>
             <tfoot>
-              {(s.discountAmt||0)>0&&<tr><td colSpan={3} style={{padding:"6px 8px",textAlign:"right",fontSize:12,color:C.red}}>Desconto</td><td style={{padding:"6px 8px",textAlign:"right",fontSize:12,color:C.red}}>- {fmt(s.discountAmt)}</td></tr>}
+              {(s.discountAmt||0)>0&&<tr><td colSpan={3} style={{padding:"6px 8px",textAlign:"right",fontSize:12,color:C.red}}>Desconto {s.discountPct}%</td><td style={{padding:"6px 8px",textAlign:"right",fontSize:12,color:C.red}}>− {fmt(s.discountAmt)}</td></tr>}
               {(s.freightPrice||0)>0&&<tr><td colSpan={3} style={{padding:"6px 8px",textAlign:"right",fontSize:12,color:C.blue}}>Frete</td><td style={{padding:"6px 8px",textAlign:"right",fontSize:12,color:C.blue}}>{fmt(s.freightPrice)}</td></tr>}
               <tr style={{borderTop:`2px solid ${C.border}`}}>
                 <td colSpan={3} style={{padding:"10px 8px",textAlign:"right",fontWeight:700}}>TOTAL</td>
-                <td style={{padding:"10px 8px",textAlign:"right",fontWeight:700,fontSize:17,color:C.green}}>{fmt(s.total)}</td>
+                <td style={{padding:"10px 8px",textAlign:"right",fontWeight:700,fontSize:17,color:cancelled?C.inkLt:C.green}}>{fmt(s.total)}</td>
               </tr>
             </tfoot>
           </table>
