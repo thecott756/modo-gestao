@@ -1970,8 +1970,7 @@ function Products({products,setProducts,setStkG,setStkL,sales,showToast,logActiv
                       placeholder="0" style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:5,color:C.ink,padding:"7px 9px",fontSize:13.5,outline:"none"}}/>
                     <button onClick={()=>setVariants(prev=>prev.filter((_,j)=>j!==i))} style={{background:C.redLt,border:"none",color:C.red,width:28,height:28,borderRadius:5,cursor:"pointer",fontSize:14}}>×</button>
                   </div>
-                );})
-
+                );})}
                 <div style={{marginTop:10,padding:"8px 12px",background:C.hover,borderRadius:6,fontSize:12.5,color:C.inkMd,display:"flex",justifyContent:"space-between"}}>
                   <span>Total galpão:</span>
                   <strong>{variants.reduce((a,v)=>a+(Number(v.qty)||0),0)} peças</strong>
