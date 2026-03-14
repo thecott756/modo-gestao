@@ -62,10 +62,10 @@ const USERS=[
 const CHANNELS=[
   {id:"galpao",   label:"Galpão",          icon:"🏭", color:"#4A7C5E",
    saleMode:["galpao","online"],
-   tabs:["inicio","pdv","clientes","transfer","produtos","devolucoes","etiquetas","dashboard"]},
+   tabs:["inicio","pdv","clientes","transfer","produtos","devolucoes","etiquetas","dashboard","config"]},
   {id:"centro",   label:"The Cott Centro", icon:"🏪", color:"#C8973A",
    saleMode:["balcao","whatsapp"],
-   tabs:["inicio","pdv","clientes","transfer","produtos","devolucoes","etiquetas","dashboard"]},
+   tabs:["inicio","pdv","clientes","transfer","produtos","devolucoes","etiquetas","dashboard","config"]},
 ];
 // Which channels each role can access
 const ROLE_CHANNELS={
@@ -446,13 +446,15 @@ function App(){
     const inChannel=curChannel.tabs.includes(n.id);
     // Stock pages: filter by channel
     if(n.id==="galpao"){
-      if(channel==="centro")return false; // Centro doesn't see Galpão stock
+      if(channel==="centro")return false;
       return inRole;
     }
     if(n.id==="loja"){
-      if(channel==="galpao")return false; // Galpão doesn't see Loja stock
+      if(channel==="galpao")return false;
       return inRole;
     }
+    // Config always visible for admin/gerente
+    if(n.id==="config")return user.role==="admin"||user.role==="gerente";
     return inRole&&inChannel;
   });
 
