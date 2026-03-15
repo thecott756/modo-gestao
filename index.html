@@ -711,10 +711,11 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
   };
 
   const gerarBoleto=async(sale)=>{
-    let apiKey="";
+    let apiKey="",cfg={};
     try{
-      const{data}=await sb.from("nfe_config").select("asaas_key").eq("id",1).single();
+      const{data}=await sb.from("nfe_config").select("*").eq("id",1).single();
       apiKey=data?.asaas_key||"";
+      cfg=data||{};
     }catch(e){}
     if(!apiKey){showToast("Configure a chave Asaas em ⚙ Configurações","error");return;}
 
@@ -722,7 +723,17 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
     try{
       const clientName=(sale.clientName||"Avulso").replace(/^[\d.\s]+/,"");
       const cpfCnpj=(sale.clientCpfCnpj||"").replace(/\D/g,"");
-      const dueDate=new Date();dueDate.setDate(dueDate.getDate()+3);
+      const dias=cfg.boleto_dias_venc||3;
+      const dueDate=new Date();dueDate.setDate(dueDate.getDate()+dias);
+
+      // Build fine/interest/discount params
+      const extras={};
+      if((cfg.boleto_multa||0)>0)  extras.fine={value:cfg.boleto_multa};
+      if((cfg.boleto_juros||0)>0)  extras.interest={value:cfg.boleto_juros};
+      if((cfg.boleto_desc_pct||0)>0&&(cfg.boleto_desc_dias||0)>0){
+        const discDate=new Date();discDate.setDate(discDate.getDate()+(dias-cfg.boleto_desc_dias));
+        extras.discount={value:cfg.boleto_desc_pct,dueDateLimitDays:cfg.boleto_desc_dias,type:"PERCENTAGE"};
+      }
 
       const{data,error}=await sb.functions.invoke("asaas-proxy",{
         body:{
@@ -734,6 +745,7 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
           value:sale.total,
           dueDate:dueDate.toISOString().split("T")[0],
           description:`Venda The Cott #${(sale.id||"").substring(0,8).toUpperCase()}`,
+          ...extras,
         }
       });
 
@@ -3754,16 +3766,30 @@ function Configuracoes({showToast,user}){
   const [asaasKey,setAsaasKey]=useState("");
   const [savedKey,setSavedKey]=useState("");
   const [saving,setSaving]=useState(false);
+  const [savingBoleto,setSavingBoleto]=useState(false);
   const [testing,setTesting]=useState(false);
-  const [testResult,setTestResult]=useState(null); // null | "ok" | "erro"
+  const [testResult,setTestResult]=useState(null);
   const [showKey,setShowKey]=useState(false);
 
-  // Load key from Supabase on mount
+  // Boleto settings
+  const [diasVenc,setDiasVenc]=useState(3);
+  const [multaPct,setMultaPct]=useState(2);
+  const [jurosPct,setJurosPct]=useState(1);
+  const [descPct,setDescPct]=useState(0);
+  const [descDias,setDescDias]=useState(0);
+  const [boletoEnv,setBoletoEnv]=useState("email"); // email | whatsapp | none
+
   useEffect(()=>{
     const load=async()=>{
       try{
-        const{data}=await sb.from("nfe_config").select("asaas_key").eq("id",1).single();
+        const{data}=await sb.from("nfe_config").select("*").eq("id",1).single();
         if(data?.asaas_key){setSavedKey(data.asaas_key);setAsaasKey(data.asaas_key);}
+        if(data?.boleto_dias_venc!=null) setDiasVenc(data.boleto_dias_venc);
+        if(data?.boleto_multa!=null)     setMultaPct(data.boleto_multa);
+        if(data?.boleto_juros!=null)     setJurosPct(data.boleto_juros);
+        if(data?.boleto_desc_pct!=null)  setDescPct(data.boleto_desc_pct);
+        if(data?.boleto_desc_dias!=null) setDescDias(data.boleto_desc_dias);
+        if(data?.boleto_envio)           setBoletoEnv(data.boleto_envio);
       }catch(e){}
     };
     load();
@@ -3775,9 +3801,26 @@ function Configuracoes({showToast,user}){
     try{
       await sb.from("nfe_config").upsert({id:1,asaas_key:asaasKey.trim()});
       setSavedKey(asaasKey.trim());
-      showToast("✅ Chave salva com sucesso!");
-    }catch(e){showToast("Erro ao salvar: "+e.message,"error");}
+      showToast("✅ Chave salva!");
+    }catch(e){showToast("Erro: "+e.message,"error");}
     setSaving(false);
+  };
+
+  const saveBoleto=async()=>{
+    setSavingBoleto(true);
+    try{
+      await sb.from("nfe_config").upsert({
+        id:1,
+        boleto_dias_venc:diasVenc,
+        boleto_multa:multaPct,
+        boleto_juros:jurosPct,
+        boleto_desc_pct:descPct,
+        boleto_desc_dias:descDias,
+        boleto_envio:boletoEnv,
+      });
+      showToast("✅ Configurações do boleto salvas!");
+    }catch(e){showToast("Erro: "+e.message,"error");}
+    setSavingBoleto(false);
   };
 
   const testKey=async()=>{
@@ -3785,108 +3828,176 @@ function Configuracoes({showToast,user}){
     if(!key){showToast("Informe a chave primeiro","error");return;}
     setTesting(true);setTestResult(null);
     try{
-      const{data,error}=await sb.functions.invoke("asaas-proxy",{
-        body:{action:"test",apiKey:key}
-      });
-      // Handle both error object and error in data
+      const{data,error}=await sb.functions.invoke("asaas-proxy",{body:{action:"test",apiKey:key}});
       const errMsg=error?.message||data?.error||null;
-      if(errMsg&&!errMsg.includes("non-2xx")){
-        setTestResult("erro");showToast("❌ "+errMsg,"error");
-      }else if(data?.ok||(!error&&!data?.error)){
-        setTestResult("ok");showToast("✅ Conexão com Asaas funcionando!");
-      }else{
-        // non-2xx likely means invalid key
-        setTestResult("erro");showToast("❌ Chave inválida — verifique no Asaas","error");
-      }
-    }catch(e){setTestResult("erro");showToast("❌ Erro: "+e.message,"error");}
+      if(data?.ok){setTestResult("ok");showToast("✅ Conexão funcionando!");}
+      else if(errMsg&&!errMsg.includes("non-2xx")){setTestResult("erro");showToast("❌ "+errMsg,"error");}
+      else{setTestResult("erro");showToast("❌ Chave inválida","error");}
+    }catch(e){setTestResult("erro");showToast("❌ "+e.message,"error");}
     setTesting(false);
   };
 
-  const maskedKey=savedKey
-    ?savedKey.substring(0,12)+"••••••••••••••••••••"+savedKey.slice(-4)
-    :"";
+  const maskedKey=savedKey?savedKey.substring(0,12)+"••••••••••••"+savedKey.slice(-4):"";
+  const vencDate=(()=>{const d=new Date();d.setDate(d.getDate()+diasVenc);return d.toLocaleDateString("pt-BR");})();
 
   return(
-    <div className="fu" style={{maxWidth:600}}>
+    <div className="fu" style={{maxWidth:640}}>
       <PageHeader title="Configurações" sub="Integrações e configurações do sistema"/>
 
-      {/* Asaas Integration */}
+      {/* ── ASAAS KEY ── */}
       <Card style={{marginBottom:16}}>
-        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
-          <div style={{width:42,height:42,borderRadius:10,background:"#EBF3FF",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>🔗</div>
-          <div>
-            <div style={{fontWeight:700,fontSize:15}}>Asaas — Geração de Boletos</div>
-            <div style={{fontSize:12,color:C.inkLt}}>Emita boletos registrados com QR Code PIX diretamente nas vendas</div>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14}}>
+          <div style={{width:40,height:40,borderRadius:10,background:"#EBF3FF",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>🔗</div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:700,fontSize:15}}>Asaas — Chave de API</div>
+            <div style={{fontSize:12,color:C.inkLt}}>Obtenha em asaas.com → Integrações → Chaves de API</div>
           </div>
           {savedKey&&(
-            <span style={{marginLeft:"auto",background:testResult==="erro"?"#FFF0F0":C.greenLt,color:testResult==="erro"?C.red:C.green,fontSize:11,fontWeight:700,padding:"3px 10px",borderRadius:20,border:`1px solid ${testResult==="erro"?C.red:C.green}`}}>
-              {testResult==="erro"?"⚠️ Erro":"✅ Conectado"}
+            <span style={{background:testResult==="erro"?"#FFF0F0":testResult==="ok"?C.greenLt:C.hover,color:testResult==="erro"?C.red:testResult==="ok"?C.green:C.inkMd,fontSize:11,fontWeight:700,padding:"3px 10px",borderRadius:20}}>
+              {testResult==="erro"?"⚠️ Erro":testResult==="ok"?"✅ Conectado":"● Salva"}
             </span>
           )}
         </div>
 
-        <SectionTitle>Chave de API</SectionTitle>
-        <div style={{fontSize:12,color:C.inkLt,marginBottom:10}}>
-          Acesse <strong>asaas.com → Integrações → Chaves de API</strong> e copie a sua chave.
-          <br/>A chave fica salva de forma segura e nunca aparece em logs ou no código.
+        <div style={{position:"relative",marginBottom:10}}>
+          <input type={showKey?"text":"password"} value={asaasKey} onChange={e=>setAsaasKey(e.target.value)}
+            placeholder={savedKey?"••••• chave salva •••••":"Cole aqui: $aact_prod_..."}
+            style={{width:"100%",background:C.hover,border:`1.5px solid ${C.border}`,borderRadius:7,color:C.ink,padding:"10px 44px 10px 13px",fontSize:13,outline:"none",fontFamily:"monospace"}}/>
+          <button onClick={()=>setShowKey(v=>!v)}
+            style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",fontSize:16,color:C.inkLt}}>
+            {showKey?"🙈":"👁️"}
+          </button>
+        </div>
+        {savedKey&&<div style={{fontSize:11,color:C.inkMd,fontFamily:"monospace",marginBottom:10,padding:"5px 10px",background:C.hover,borderRadius:5}}>{maskedKey}</div>}
+        <div style={{display:"flex",gap:8}}>
+          <Btn v="gold" onClick={saveKey} disabled={saving||!asaasKey.trim()}>{saving?"Salvando...":"💾 Salvar Chave"}</Btn>
+          <Btn v="ghost" onClick={testKey} disabled={testing}>{testing?"Testando...":"🔌 Testar Conexão"}</Btn>
+        </div>
+        {testResult==="ok"&&<div style={{marginTop:10,background:C.greenLt,borderRadius:7,padding:"9px 13px",fontSize:13,color:C.green}}>✅ Conexão com Asaas funcionando!</div>}
+        {testResult==="erro"&&<div style={{marginTop:10,background:"#FFF0F0",borderRadius:7,padding:"9px 13px",fontSize:13,color:C.red}}>❌ Chave inválida. Verifique no Asaas.</div>}
+      </Card>
+
+      {/* ── BOLETO SETTINGS ── */}
+      <Card style={{marginBottom:16}}>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
+          <div style={{width:40,height:40,borderRadius:10,background:"#FFF8E7",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>🧾</div>
+          <div>
+            <div style={{fontWeight:700,fontSize:15}}>Configurações do Boleto</div>
+            <div style={{fontSize:12,color:C.inkLt}}>Vencimento, multa, juros e desconto aplicados em todos os boletos</div>
+          </div>
         </div>
 
-        <div style={{display:"flex",gap:8,marginBottom:10}}>
-          <div style={{flex:1,position:"relative"}}>
-            <input
-              type={showKey?"text":"password"}
-              value={asaasKey}
-              onChange={e=>setAsaasKey(e.target.value)}
-              placeholder={savedKey?"••••• chave salva •••••":"Cole sua chave aqui: $aact_..."}
-              style={{width:"100%",background:C.hover,border:`1.5px solid ${C.border}`,borderRadius:7,color:C.ink,padding:"10px 44px 10px 13px",fontSize:13,outline:"none",fontFamily:"monospace"}}
-            />
-            <button onClick={()=>setShowKey(v=>!v)}
-              style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",fontSize:16,color:C.inkLt}}>
-              {showKey?"🙈":"👁️"}
+        {/* Vencimento */}
+        <SectionTitle>Prazo de vencimento</SectionTitle>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,background:C.hover,borderRadius:8,padding:"8px 14px"}}>
+            <button onClick={()=>setDiasVenc(d=>Math.max(1,d-1))}
+              style={{width:28,height:28,borderRadius:6,border:`1px solid ${C.border}`,background:C.surface,cursor:"pointer",fontSize:18,fontWeight:700,color:C.ink}}>−</button>
+            <div style={{textAlign:"center",minWidth:60}}>
+              <div style={{fontSize:22,fontWeight:700,color:C.gold}}>{diasVenc}</div>
+              <div style={{fontSize:10,color:C.inkLt}}>dia(s)</div>
+            </div>
+            <button onClick={()=>setDiasVenc(d=>Math.min(30,d+1))}
+              style={{width:28,height:28,borderRadius:6,border:`1px solid ${C.border}`,background:C.surface,cursor:"pointer",fontSize:18,fontWeight:700,color:C.ink}}>+</button>
+          </div>
+          <div style={{fontSize:12.5,color:C.inkMd}}>
+            Boleto gerado hoje vence em<br/>
+            <strong style={{color:C.ink}}>{vencDate}</strong>
+          </div>
+        </div>
+
+        {/* Multa e Juros */}
+        <SectionTitle>Multa e Juros por atraso</SectionTitle>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
+          <div>
+            <div style={{fontSize:12,color:C.inkLt,marginBottom:6}}>Multa (aplicada 1× no atraso)</div>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <input type="number" min={0} max={2} step={0.1} value={multaPct}
+                onChange={e=>setMultaPct(Math.min(2,Math.max(0,parseFloat(e.target.value)||0)))}
+                style={{width:80,background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",fontSize:15,fontWeight:600,textAlign:"center",outline:"none",color:C.ink}}/>
+              <span style={{fontSize:14,color:C.inkMd,fontWeight:600}}>%</span>
+            </div>
+            <div style={{fontSize:10.5,color:C.inkFt,marginTop:4}}>Máx. legal: 2%</div>
+          </div>
+          <div>
+            <div style={{fontSize:12,color:C.inkLt,marginBottom:6}}>Juros (ao mês, pro-rata)</div>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <input type="number" min={0} max={1} step={0.1} value={jurosPct}
+                onChange={e=>setJurosPct(Math.min(1,Math.max(0,parseFloat(e.target.value)||0)))}
+                style={{width:80,background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",fontSize:15,fontWeight:600,textAlign:"center",outline:"none",color:C.ink}}/>
+              <span style={{fontSize:14,color:C.inkMd,fontWeight:600}}>% a.m.</span>
+            </div>
+            <div style={{fontSize:10.5,color:C.inkFt,marginTop:4}}>Máx. legal: 1% a.m.</div>
+          </div>
+        </div>
+
+        {/* Desconto */}
+        <SectionTitle>Desconto por pagamento antecipado</SectionTitle>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
+          <div>
+            <div style={{fontSize:12,color:C.inkLt,marginBottom:6}}>Desconto</div>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <input type="number" min={0} max={20} step={0.5} value={descPct}
+                onChange={e=>setDescPct(Math.max(0,parseFloat(e.target.value)||0))}
+                style={{width:80,background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",fontSize:15,fontWeight:600,textAlign:"center",outline:"none",color:C.ink}}/>
+              <span style={{fontSize:14,color:C.inkMd,fontWeight:600}}>%</span>
+            </div>
+          </div>
+          <div>
+            <div style={{fontSize:12,color:C.inkLt,marginBottom:6}}>Válido até (dias antes do venc.)</div>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <input type="number" min={0} max={diasVenc} value={descDias}
+                onChange={e=>setDescDias(Math.max(0,parseInt(e.target.value)||0))}
+                style={{width:80,background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",fontSize:15,fontWeight:600,textAlign:"center",outline:"none",color:C.ink}}/>
+              <span style={{fontSize:14,color:C.inkMd,fontWeight:600}}>dia(s)</span>
+            </div>
+          </div>
+        </div>
+        {descPct>0&&descDias>0&&(
+          <div style={{background:C.greenLt,borderRadius:7,padding:"8px 12px",fontSize:12.5,color:C.green,marginBottom:16}}>
+            💡 Desconto de {descPct}% para pagamentos até {descDias} dia(s) antes do vencimento
+          </div>
+        )}
+
+        {/* Envio automático */}
+        <SectionTitle>Envio automático do boleto</SectionTitle>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:16}}>
+          {[["none","❌ Não enviar"],["email","✉️ E-mail"],["whatsapp","📱 WhatsApp"]].map(([v,l])=>(
+            <button key={v} onClick={()=>setBoletoEnv(v)}
+              style={{padding:"10px 8px",borderRadius:8,border:`1.5px solid ${boletoEnv===v?C.gold:C.border}`,background:boletoEnv===v?C.goldLt:"transparent",color:boletoEnv===v?C.gold:C.inkMd,cursor:"pointer",fontSize:13,fontWeight:boletoEnv===v?600:400}}>
+              {l}
             </button>
-          </div>
+          ))}
         </div>
 
-        {savedKey&&!showKey&&(
-          <div style={{fontSize:12,color:C.inkMd,background:C.hover,borderRadius:6,padding:"7px 12px",marginBottom:10,fontFamily:"monospace"}}>
-            Chave atual: {maskedKey}
-          </div>
-        )}
-
-        <div style={{display:"flex",gap:10}}>
-          <Btn v="gold" onClick={saveKey} disabled={saving||!asaasKey.trim()}>
-            {saving?"Salvando...":"💾 Salvar Chave"}
-          </Btn>
-          <Btn v="ghost" onClick={testKey} disabled={testing}>
-            {testing?"Testando...":"🔌 Testar Conexão"}
-          </Btn>
+        {/* Preview */}
+        <div style={{background:C.hover,borderRadius:8,padding:"12px 14px",marginBottom:14,fontSize:12.5,color:C.inkMd}}>
+          <div style={{fontWeight:600,color:C.ink,marginBottom:6}}>📋 Resumo das configurações:</div>
+          <div>Vencimento: <strong>{diasVenc} dia(s)</strong> após a emissão</div>
+          <div>Multa: <strong>{multaPct}%</strong> {multaPct===0?"(sem multa)":"no atraso"}</div>
+          <div>Juros: <strong>{jurosPct}% a.m.</strong> {jurosPct===0?"(sem juros)":"após vencimento"}</div>
+          {descPct>0?<div>Desconto: <strong>{descPct}%</strong> se pagar {descDias}d antes</div>:<div>Desconto: <strong>Nenhum</strong></div>}
+          <div>Envio: <strong>{boletoEnv==="none"?"Não enviar":boletoEnv==="email"?"Por e-mail":"Por WhatsApp"}</strong></div>
         </div>
 
-        {testResult==="ok"&&(
-          <div style={{marginTop:12,background:C.greenLt,borderRadius:8,padding:"10px 14px",fontSize:13,color:C.green,display:"flex",alignItems:"center",gap:8}}>
-            <span>✅</span> Conexão com Asaas funcionando! Boletos disponíveis nas vendas.
-          </div>
-        )}
-        {testResult==="erro"&&(
-          <div style={{marginTop:12,background:"#FFF0F0",borderRadius:8,padding:"10px 14px",fontSize:13,color:C.red,display:"flex",alignItems:"center",gap:8}}>
-            <span>❌</span> Chave inválida. Verifique se copiou corretamente do Asaas.
-          </div>
-        )}
+        <Btn v="success" onClick={saveBoleto} disabled={savingBoleto} full>
+          {savingBoleto?"Salvando...":"✅ Salvar Configurações do Boleto"}
+        </Btn>
       </Card>
 
       {/* Como usar */}
       <Card style={{background:C.hover,border:"none"}}>
-        <SectionTitle>Como usar os boletos</SectionTitle>
+        <SectionTitle>Como gerar boletos nas vendas</SectionTitle>
         {[
-          ["1","Salve e teste a chave acima"],
-          ["2","Na tela de Venda → Pagamento, selecione 'Boleto' como forma de pagamento"],
-          ["3","Clique em '🧾 Gerar Boleto' — o PDF abre automaticamente para impressão"],
-          ["4","O boleto tem QR Code PIX embutido — cliente escolhe como pagar"],
-          ["5","Taxa: R$ 0,99 por boleto pago nos primeiros 3 meses, depois R$ 1,99. Boletos não pagos não são cobrados."],
+          ["1","Configure e salve as definições acima"],
+          ["2","Venda → Pagamento → finalize → clique '🧾 Gerar Boleto'"],
+          ["3","O PDF abre automaticamente com código de barras e QR PIX"],
+          ["4","Taxa Asaas: R$ 0,99/boleto pago (3 primeiros meses) · R$ 1,99 depois"],
+          ["5","Boletos não pagos não geram cobrança"],
         ].map(([n,t])=>(
-          <div key={n} style={{display:"flex",gap:12,padding:"7px 0",borderBottom:`1px solid ${C.border}`,alignItems:"flex-start"}}>
-            <span style={{minWidth:22,height:22,borderRadius:"50%",background:C.gold,color:"#fff",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>{n}</span>
-            <span style={{fontSize:13,color:C.inkMd}}>{t}</span>
+          <div key={n} style={{display:"flex",gap:10,padding:"6px 0",borderBottom:`1px solid ${C.border}`,alignItems:"flex-start"}}>
+            <span style={{minWidth:20,height:20,borderRadius:"50%",background:C.gold,color:"#fff",fontSize:10,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{n}</span>
+            <span style={{fontSize:12.5,color:C.inkMd}}>{t}</span>
           </div>
         ))}
       </Card>
