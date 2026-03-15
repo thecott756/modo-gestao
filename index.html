@@ -95,6 +95,8 @@ const CAT_COLOR={"Camiseta":"#D4A574","Calça":"#7B9EA6","Vestido":"#C4A0B5","Bl
 const SIZES_NUM="34,36,38,40,42,44,46,48,50,52";
 const SIZES_LET="PP,P,M,G,GG,XG,XGG,XL";
 
+const APP_VERSION="2.4.0";
+const APP_BUILD=new Date("2026-03-14").toLocaleDateString("pt-BR");
 const fmt=v=>`R$ ${Number(v||0).toFixed(2).replace(".",",")}`;
 const fmtD=d=>new Date(d).toLocaleString("pt-BR");
 const fmtDS=d=>new Date(d).toLocaleDateString("pt-BR");
@@ -580,12 +582,62 @@ function Home({setTab,user,products,stkG,stkL,sales}){
     {id:"dashboard",icon:"▦",label:"Dashboard",     color:C.gold,   bg:C.goldLt},
   ].filter(s=>user.role==="admin"||user.role==="gerente"||["pdv","clientes"].includes(s.id));
 
+  const changelog=[
+    {v:"2.4.0",d:"14/03/2026",items:["Geração de boletos Asaas com parcelamento 1×/2×/3×","Envio de comprovante por e-mail via Resend","Configuração de multa, juros e desconto por boleto","Devoluções com restauração de estoque"]},
+    {v:"2.3.0",d:"14/03/2026",items:["Importação de contagem de estoque via Excel","Aba Devoluções independente","Transferência com grade completa","Tamanhos ordenados PP→P→M→G..."]},
+    {v:"2.2.0",d:"14/03/2026",items:["Seleção de canal por ponto de venda (Galpão / Centro)","PDV em 4 etapas: Modalidade→Cliente→Carrinho→Pagamento","Dashboard com Vendas e Atividades","Múltiplas formas de pagamento por venda"]},
+    {v:"2.1.0",d:"09/03/2026",items:["Aba Início como tela zero","Grade completa no PDV","Etiquetas A4 formato Pimaco (24/folha)","Cancelamento de venda com estoque restaurado"]},
+    {v:"2.0.0",d:"08/03/2026",items:["Integração Supabase em produção","Importação de dados do Fantastsoft","NF-e, Transferências e Clientes com busca CEP/CNPJ"]},
+  ];
+  const [showLog,setShowLog]=useState(false);
+
   return(
     <div className="fu" style={{maxWidth:800}}>
-      <div style={{marginBottom:32}}>
-        <div className="cor" style={{fontSize:38,fontWeight:400,marginBottom:4}}>Olá, {user.name} 👋</div>
-        <div style={{fontSize:14,color:C.inkLt}}>{new Date().toLocaleDateString("pt-BR",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</div>
+      <div style={{marginBottom:28,display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:12}}>
+        <div>
+          <div className="cor" style={{fontSize:38,fontWeight:400,marginBottom:4}}>Olá, {user.name} 👋</div>
+          <div style={{fontSize:14,color:C.inkLt}}>{new Date().toLocaleDateString("pt-BR",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</div>
+        </div>
+        {/* Version badge */}
+        <button onClick={()=>setShowLog(v=>!v)}
+          style={{display:"flex",alignItems:"center",gap:8,background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"8px 14px",cursor:"pointer",transition:"all .15s"}}
+          onMouseEnter={e=>{e.currentTarget.style.borderColor=C.gold;}}
+          onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;}}>
+          <div style={{width:8,height:8,borderRadius:"50%",background:C.green}}/>
+          <div style={{textAlign:"left"}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.ink}}>MODO v{APP_VERSION}</div>
+            <div style={{fontSize:10,color:C.inkLt}}>Atualizado em {APP_BUILD}</div>
+          </div>
+          <span style={{fontSize:10,color:C.inkLt}}>{showLog?"▲":"▼"}</span>
+        </button>
       </div>
+
+      {/* Changelog drawer */}
+      {showLog&&(
+        <div style={{marginBottom:24,background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
+          <div style={{padding:"14px 18px",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{fontWeight:700,fontSize:14}}>📋 Histórico de versões</div>
+            <button onClick={()=>setShowLog(false)} style={{background:"none",border:"none",cursor:"pointer",color:C.inkLt,fontSize:18}}>×</button>
+          </div>
+          <div style={{maxHeight:300,overflowY:"auto"}}>
+            {changelog.map((log,i)=>(
+              <div key={i} style={{padding:"12px 18px",borderBottom:`1px solid ${C.border}`,display:"flex",gap:14}}>
+                <div style={{flexShrink:0}}>
+                  <div style={{fontWeight:700,fontSize:13,color:i===0?C.gold:C.ink}}>v{log.v}</div>
+                  <div style={{fontSize:10,color:C.inkFt}}>{log.d}</div>
+                </div>
+                <ul style={{margin:0,padding:0,listStyle:"none"}}>
+                  {log.items.map((item,j)=>(
+                    <li key={j} style={{fontSize:12,color:C.inkMd,padding:"1px 0",display:"flex",gap:6,alignItems:"flex-start"}}>
+                      <span style={{color:i===0?C.gold:C.green,flexShrink:0}}>✓</span>{item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Quick stats */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:14,marginBottom:32}}>
@@ -925,14 +977,61 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
     w.document.close();
   };
 
-  const sendEmail=(sale)=>{
+  const sendEmail=async(sale,emailOverride)=>{
     const clientName=(sale.clientName||"Avulso").replace(/^[\d.\s]+/,"");
-    const items=sale.items?.map(i=>`${i.qty}x ${i.name} (Tam ${i.sz}) — ${fmt(i.price*i.qty)}`).join("%0A");
-    const disc=sale.discountAmt>0?`%0ADesconto: -${fmt(sale.discountAmt)}`:"";
-    const fret=sale.freightPrice>0?`%0AFrete: ${fmt(sale.freightPrice)}`:"";
-    const body=`Olá ${clientName},%0A%0ASeu comprovante de compra — The Cott:%0A%0A${items}${disc}${fret}%0A%0ATOTAL: ${fmt(sale.total)}%0APagamento: ${sale.paymentMethod}%0A%0ATroca até: ${new Date(sale.tradeDeadline).toLocaleDateString("pt-BR")} (7 dias)%0A%0AObrigado pela preferência!%0AThe Cott LTDA`;
-    const email=wpEmail||"";
-    window.open(`mailto:${email}?subject=Comprovante The Cott — ${new Date(sale.date).toLocaleDateString("pt-BR")}&body=${body}`,"_blank");
+    const email=emailOverride||wpEmail||selClient?.email||"";
+    if(!email){showToast("Informe o e-mail do cliente","error");return;}
+    
+    // Try Resend first (if configured)
+    let cfg={};
+    try{const{data}=await sb.from("nfe_config").select("resend_key,resend_from").eq("id",1).single();cfg=data||{};}catch(e){}
+    
+    if(cfg.resend_key&&cfg.resend_from){
+      // Send via Resend Edge Function
+      const dt=new Date(sale.date).toLocaleDateString("pt-BR");
+      const itemsHtml=(sale.items||[]).map(i=>`<tr><td style="padding:6px 12px;border-bottom:1px solid #eee">${i.qty}×</td><td style="padding:6px 12px;border-bottom:1px solid #eee">${i.name} (Tam ${i.sz})</td><td style="padding:6px 12px;border-bottom:1px solid #eee;text-align:right">${fmt(i.price*i.qty)}</td></tr>`).join("");
+      const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"/></head><body style="font-family:Arial,sans-serif;color:#1a1714;max-width:520px;margin:0 auto;padding:20px">
+        <div style="text-align:center;padding:20px 0;border-bottom:2px solid #1a1714;margin-bottom:20px">
+          <div style="font-family:Georgia,serif;font-size:28px;letter-spacing:4px">✦ THE COTT ✦</div>
+          <div style="font-size:11px;letter-spacing:2px;color:#888;margin-top:4px">COMPROVANTE DE COMPRA</div>
+        </div>
+        <p style="margin-bottom:16px">Olá, <strong>${clientName}</strong>!</p>
+        <p style="margin-bottom:20px;color:#555">Segue o comprovante da sua compra realizada no dia <strong>${dt}</strong> na <strong>The Cott</strong>.</p>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
+          <thead><tr style="background:#f7f5f2"><th style="padding:8px 12px;text-align:left;font-size:11px;color:#888;border-bottom:2px solid #1a1714">Qtd</th><th style="padding:8px 12px;text-align:left;font-size:11px;color:#888;border-bottom:2px solid #1a1714">Produto</th><th style="padding:8px 12px;text-align:right;font-size:11px;color:#888;border-bottom:2px solid #1a1714">Valor</th></tr></thead>
+          <tbody>${itemsHtml}</tbody>
+          <tfoot><tr><td colspan="2" style="padding:10px 12px;text-align:right;font-weight:700;border-top:2px solid #1a1714">TOTAL</td><td style="padding:10px 12px;text-align:right;font-weight:700;font-size:18px;color:#4A7C5E;border-top:2px solid #1a1714">${fmt(sale.total)}</td></tr></tfoot>
+        </table>
+        <div style="background:#f7f5f2;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#555">
+          <div>💳 Pagamento: <strong>${sale.paymentMethod}</strong></div>
+          <div>📅 Troca até: <strong>${new Date(sale.tradeDeadline||sale.date).toLocaleDateString("pt-BR")}</strong> (7 dias corridos)</div>
+        </div>
+        <div style="text-align:center;padding-top:16px;border-top:1px dashed #ccc;font-size:11px;color:#aaa">The Cott LTDA — obrigado pela preferência! 🛍️</div>
+      </body></html>`;
+      
+      showToast("Enviando e-mail...");
+      try{
+        const{data,error}=await sb.functions.invoke("send-email",{
+          body:{
+            action:"send",
+            apiKey:cfg.resend_key,
+            from:`The Cott <${cfg.resend_from}>`,
+            to:email,
+            subject:`Comprovante de compra — The Cott — ${dt}`,
+            html,
+          }
+        });
+        if(data?.ok){showToast("✅ E-mail enviado para "+email);}
+        else{showToast("❌ "+(data?.error||error?.message||"Erro no envio"),"error");}
+      }catch(e){showToast("Erro: "+e.message,"error");}
+    }else{
+      // Fallback: mailto
+      const dt=new Date(sale.date).toLocaleDateString("pt-BR");
+      const items=(sale.items||[]).map(i=>`${i.qty}x ${i.name} (Tam ${i.sz}) — ${fmt(i.price*i.qty)}`).join("%0A");
+      const body=`Olá, ${clientName}!%0A%0ASegue o comprovante da sua compra realizada no dia ${dt} na The Cott.%0A%0A${items}%0A%0ATOTAL: ${fmt(sale.total)}%0AForma de pagamento: ${sale.paymentMethod}%0A%0APolítica de troca: até ${new Date(sale.tradeDeadline||sale.date).toLocaleDateString("pt-BR")} (7 dias).%0A%0AObrigado pela preferência!%0AThe Cott LTDA`;
+      window.open(`mailto:${email}?subject=Comprovante de compra — The Cott — ${dt}&body=${body}`,"_blank");
+      showToast("Configure o Resend em ⚙ Configurações para envio automático");
+    }
   };
 
   const filteredClients=[...clients]
@@ -1151,16 +1250,7 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
             )}
           </Card>
         )}
-        {done&&(
-          <div style={{background:C.greenLt,borderRadius:10,padding:"14px 18px",marginBottom:12,display:"flex",alignItems:"center",gap:10}}>
-            <span style={{fontSize:24}}>✅</span>
-            <div>
-              <div style={{fontWeight:700,color:C.green}}>Pagamento completo!</div>
-              {payments.some(p=>p.method==="dinheiro")&&<div style={{fontSize:13,color:C.green}}>Troco: {fmt(Math.max(0,paidSoFar-total))}</div>}
-            </div>
-          </div>
-        )}
-        {/* Confirm button — only show when payment not yet finalized */}
+        {/* ── CONFIRMAR ── */}
         {!receipt&&(
           <Btn v="success" onClick={async()=>{
             if(!done){showToast("Adicione pagamento suficiente","error");return;}
@@ -1175,7 +1265,7 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
         {receipt&&!boletoStep&&(
           <div style={{display:"flex",flexDirection:"column",gap:10,marginTop:4}}>
 
-            {/* 1. Pagamento completo */}
+            {/* Pagamento completo — apenas 1 vez, sem o done duplicado */}
             <div style={{background:C.greenLt,border:`1px solid ${C.green}`,borderRadius:10,padding:"12px 16px",display:"flex",alignItems:"center",gap:10}}>
               <span style={{fontSize:22}}>✅</span>
               <div>
@@ -1185,7 +1275,7 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
               </div>
             </div>
 
-            {/* 2. Imprimir comprovante */}
+            {/* Imprimir comprovante */}
             <Btn v="gold" onClick={()=>{printReceipt(receipt);setPrinted(true);}} full sz="lg">
               🖨️ Imprimir Comprovante
             </Btn>
@@ -1200,15 +1290,49 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
               </div>
             )}
 
-            {/* 3. Boleto — só aparece se pagamento for boleto */}
+            {/* Boleto — só se pagamento for boleto */}
             {receipt.paymentMethod==="boleto"&&(
-              <Btn v="secondary" onClick={()=>setBoletoStep(true)} full>
-                🧾 Configurar e Gerar Boleto
+              <Btn v="secondary" onClick={()=>setBoletoStep(true)} full sz="lg">
+                🧾 Gerar Boletos
               </Btn>
             )}
 
-            {/* 4. WhatsApp */}
-            <Btn v="success" onClick={()=>sendWA(receipt)} full>📱 Enviar por WhatsApp</Btn>
+            {/* Contato — preenche se não tiver no cadastro */}
+            <Card>
+              <div style={{fontSize:11,fontWeight:700,color:C.inkLt,letterSpacing:.5,marginBottom:10,textTransform:"uppercase"}}>Enviar comprovante</div>
+              {/* WhatsApp */}
+              <div style={{marginBottom:8}}>
+                <div style={{fontSize:11.5,color:C.inkLt,marginBottom:4}}>📱 WhatsApp {!selClient?.phone&&<span style={{color:C.red,fontSize:10}}>— não cadastrado</span>}</div>
+                <div style={{display:"flex",gap:8}}>
+                  <input value={wpPhone} onChange={e=>setWpPhone(e.target.value)}
+                    placeholder="(24) 99999-9999"
+                    style={{flex:1,background:C.hover,border:`1px solid ${C.border}`,borderRadius:6,color:C.ink,padding:"8px 11px",fontSize:13,outline:"none"}}/>
+                  <Btn v="success" onClick={()=>{
+                    const phone=(wpPhone||selClient?.phone||"").replace(/\D/g,"");
+                    if(!phone){showToast("Informe o WhatsApp","error");return;}
+                    const nm=(receipt.clientName||"").replace(/^[\d.\s]+/,"");
+                    const dt=new Date(receipt.date).toLocaleDateString("pt-BR");
+                    const items=(receipt.items||[]).map(i=>`• ${i.qty}× ${i.name} (Tam ${i.sz}) — ${fmt(i.price*i.qty)}`).join("\n");
+                    const msg=encodeURIComponent(`Olá, ${nm}! 👋\n\nSegue o comprovante da sua compra realizada no dia *${dt}* na *The Cott*:\n\n${items}\n\n*TOTAL: ${fmt(receipt.total)}*\nForma de pgto: ${receipt.paymentMethod}\n\n📅 Troca até: ${new Date(receipt.tradeDeadline||receipt.date).toLocaleDateString("pt-BR")} (7 dias)\n\nObrigado pela preferência! 🛍️\nThe Cott LTDA`);
+                    window.open(`https://wa.me/55${phone}?text=${msg}`,"_blank");
+                  }}>📱 Enviar</Btn>
+                </div>
+              </div>
+              {/* Email */}
+              <div>
+                <div style={{fontSize:11.5,color:C.inkLt,marginBottom:4}}>✉️ E-mail {!selClient?.email&&<span style={{color:C.red,fontSize:10}}>— não cadastrado</span>}</div>
+                <div style={{display:"flex",gap:8}}>
+                  <input value={wpEmail} onChange={e=>setWpEmail(e.target.value)}
+                    placeholder="cliente@email.com" type="email"
+                    style={{flex:1,background:C.hover,border:`1px solid ${C.border}`,borderRadius:6,color:C.ink,padding:"8px 11px",fontSize:13,outline:"none"}}/>
+                  <Btn v="blue" onClick={()=>{
+                    const email=wpEmail||selClient?.email||"";
+                    if(!email){showToast("Informe o e-mail","error");return;}
+                    sendEmail(receipt,email);
+                  }}>✉️ Enviar</Btn>
+                </div>
+              </div>
+            </Card>
           </div>
         )}
 
@@ -1315,7 +1439,9 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
               // Send via WhatsApp
               if(selClient?.phone&&lastUrl){
                 const phone=(selClient.phone||"").replace(/\D/g,"");
-                const msg=encodeURIComponent(`*BOLETO — THE COTT*\n${boletoQtd} boleto(s) de ${fmt(receipt.total/boletoQtd)}\nLink: ${lastUrl}\n\nComprovante de compra em anexo.`);
+                const nm=(receipt.clientName||"").replace(/^[\d.\s]+/,"");
+                const dt=new Date(receipt.date).toLocaleDateString("pt-BR");
+                const msg=encodeURIComponent(`Olá, ${nm}! 👋\n\nSegue o comprovante da sua compra realizada no dia *${dt}* na *The Cott*.\n\n*Total: ${fmt(receipt.total)}*\n*${boletoQtd} boleto(s)* de ${fmt(receipt.total/boletoQtd)} cada\n\n🔗 Link do boleto: ${lastUrl}\n\n📅 Troca até ${new Date(receipt.tradeDeadline||receipt.date).toLocaleDateString("pt-BR")} (7 dias)\n\nObrigado pela preferência! 🛍️\nThe Cott LTDA`);
                 window.open(`https://wa.me/55${phone}?text=${msg}`,"_blank");
               }
               setGerandoBoleto(false);
@@ -3920,6 +4046,12 @@ function Configuracoes({showToast,user}){
   const [descPct,setDescPct]=useState(0);
   const [descDias,setDescDias]=useState(0);
   const [boletoEnv,setBoletoEnv]=useState("email"); // email | whatsapp | none
+  // Resend
+  const [resendKey,setResendKey]=useState("");
+  const [resendFrom,setResendFrom]=useState("");
+  const [savingResend,setSavingResend]=useState(false);
+  const [testResend,setTestResend]=useState(null);
+  const [showResendKey,setShowResendKey]=useState(false);
 
   useEffect(()=>{
     const load=async()=>{
@@ -3932,6 +4064,8 @@ function Configuracoes({showToast,user}){
         if(data?.boleto_desc_pct!=null)  setDescPct(data.boleto_desc_pct);
         if(data?.boleto_desc_dias!=null) setDescDias(data.boleto_desc_dias);
         if(data?.boleto_envio)           setBoletoEnv(data.boleto_envio);
+        if(data?.resend_key)              setResendKey(data.resend_key);
+        if(data?.resend_from)             setResendFrom(data.resend_from);
       }catch(e){}
     };
     load();
@@ -3963,6 +4097,35 @@ function Configuracoes({showToast,user}){
       showToast("✅ Configurações do boleto salvas!");
     }catch(e){showToast("Erro: "+e.message,"error");}
     setSavingBoleto(false);
+  };
+
+  const saveResendConfig=async()=>{
+    if(!resendKey.trim()||!resendFrom.trim()){showToast("Preencha chave e e-mail remetente","error");return;}
+    setSavingResend(true);
+    try{
+      await sb.from("nfe_config").upsert({id:1,resend_key:resendKey.trim(),resend_from:resendFrom.trim()});
+      showToast("✅ Configuração de e-mail salva!");
+    }catch(e){showToast("Erro: "+e.message,"error");}
+    setSavingResend(false);
+  };
+
+  const testResendConfig=async()=>{
+    if(!resendKey.trim()||!resendFrom.trim()){showToast("Salve a configuração primeiro","error");return;}
+    setTestResend(null);
+    try{
+      const{data,error}=await sb.functions.invoke("send-email",{
+        body:{
+          action:"test",
+          apiKey:resendKey.trim(),
+          from:resendFrom.trim(),
+          to:resendFrom.trim(),
+          subject:"Teste MODO — E-mail funcionando!",
+          html:"<p>Olá! Este é um e-mail de teste do sistema <strong>MODO Gestão Fashion</strong>. Se você recebeu este e-mail, a integração está funcionando corretamente. ✅</p><p>The Cott LTDA</p>",
+        }
+      });
+      if(data?.ok){setTestResend("ok");showToast("✅ E-mail de teste enviado!");}
+      else{setTestResend("erro");showToast("❌ "+(data?.error||error?.message||"Erro no envio"),"error");}
+    }catch(e){setTestResend("erro");showToast("❌ "+e.message,"error");}
   };
 
   const testKey=async()=>{
@@ -4125,6 +4288,60 @@ function Configuracoes({showToast,user}){
         <Btn v="success" onClick={saveBoleto} disabled={savingBoleto} full>
           {savingBoleto?"Salvando...":"✅ Salvar Configurações do Boleto"}
         </Btn>
+      </Card>
+
+      {/* ── RESEND EMAIL ── */}
+      <Card style={{marginBottom:16}}>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14}}>
+          <div style={{width:40,height:40,borderRadius:10,background:"#F0FFF4",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>✉️</div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:700,fontSize:15}}>Resend — Envio de E-mails</div>
+            <div style={{fontSize:12,color:C.inkLt}}>Envie comprovantes diretamente aos clientes. Plano grátis: 3.000 e-mails/mês</div>
+          </div>
+          {resendKey&&(
+            <span style={{background:testResend==="ok"?C.greenLt:testResend==="erro"?"#FFF0F0":C.hover,color:testResend==="ok"?C.green:testResend==="erro"?C.red:C.inkMd,fontSize:11,fontWeight:700,padding:"3px 10px",borderRadius:20}}>
+              {testResend==="ok"?"✅ Ativo":testResend==="erro"?"⚠️ Erro":"● Configurado"}
+            </span>
+          )}
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr",gap:10,marginBottom:12}}>
+          <div>
+            <div style={{fontSize:11.5,color:C.inkLt,marginBottom:5}}>Chave de API (resend.com → API Keys)</div>
+            <div style={{position:"relative"}}>
+              <input type={showResendKey?"text":"password"} value={resendKey} onChange={e=>setResendKey(e.target.value)}
+                placeholder="re_..."
+                style={{width:"100%",background:C.hover,border:`1.5px solid ${C.border}`,borderRadius:7,color:C.ink,padding:"9px 40px 9px 12px",fontSize:13,outline:"none",fontFamily:"monospace"}}/>
+              <button onClick={()=>setShowResendKey(v=>!v)}
+                style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",fontSize:15,color:C.inkLt}}>
+                {showResendKey?"🙈":"👁️"}
+              </button>
+            </div>
+          </div>
+          <div>
+            <div style={{fontSize:11.5,color:C.inkLt,marginBottom:5}}>E-mail remetente (domínio verificado no Resend)</div>
+            <input type="email" value={resendFrom} onChange={e=>setResendFrom(e.target.value)}
+              placeholder="contato@thecott.com.br"
+              style={{width:"100%",background:C.hover,border:`1.5px solid ${C.border}`,borderRadius:7,color:C.ink,padding:"9px 12px",fontSize:13,outline:"none"}}/>
+          </div>
+        </div>
+
+        <div style={{display:"flex",gap:8}}>
+          <Btn v="gold" onClick={saveResendConfig} disabled={savingResend||!resendKey.trim()||!resendFrom.trim()}>
+            {savingResend?"Salvando...":"💾 Salvar"}
+          </Btn>
+          <Btn v="ghost" onClick={testResendConfig} disabled={!resendKey.trim()}>
+            📧 Testar envio
+          </Btn>
+        </div>
+        {testResend==="ok"&&<div style={{marginTop:10,background:C.greenLt,borderRadius:7,padding:"9px 13px",fontSize:13,color:C.green}}>✅ E-mail de teste enviado com sucesso!</div>}
+        {testResend==="erro"&&<div style={{marginTop:10,background:"#FFF0F0",borderRadius:7,padding:"9px 13px",fontSize:13,color:C.red}}>❌ Erro. Verifique a chave e o domínio no Resend.</div>}
+        
+        {!resendKey&&(
+          <div style={{marginTop:10,background:C.hover,borderRadius:7,padding:"9px 12px",fontSize:12,color:C.inkMd}}>
+            💡 <strong>Como configurar:</strong> Acesse resend.com → crie conta grátis → verifique seu domínio → gere uma API Key → cole acima.
+          </div>
+        )}
       </Card>
 
       {/* Como usar */}
