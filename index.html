@@ -711,61 +711,40 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
   };
 
   const gerarBoleto=async(sale)=>{
-    // Load Asaas key from DB
     let apiKey="";
     try{
       const{data}=await sb.from("nfe_config").select("asaas_key").eq("id",1).single();
       apiKey=data?.asaas_key||"";
     }catch(e){}
-    if(!apiKey){showToast("Configure a chave do Asaas em Configurações","error");return;}
+    if(!apiKey){showToast("Configure a chave Asaas em ⚙ Configurações","error");return;}
 
     showToast("Gerando boleto...");
     try{
-      // 1. Find or create customer in Asaas
       const clientName=(sale.clientName||"Avulso").replace(/^[\d.\s]+/,"");
-      const cpfCnpj=sale.clientCpfCnpj||"";
-      
-      let customerId="";
-      // Try to find existing customer
-      if(cpfCnpj){
-        const search=await fetch(`https://api.asaas.com/v3/customers?cpfCnpj=${cpfCnpj.replace(/\D/g,"")}`,{
-          headers:{"access_token":apiKey}
-        });
-        const sd=await search.json();
-        if(sd.data?.length>0)customerId=sd.data[0].id;
-      }
-      // Create customer if not found
-      if(!customerId){
-        const cr=await fetch("https://api.asaas.com/v3/customers",{
-          method:"POST",
-          headers:{"access_token":apiKey,"Content-Type":"application/json"},
-          body:JSON.stringify({name:clientName,cpfCnpj:cpfCnpj.replace(/\D/g,"")||undefined,phone:sale.clientPhone||undefined})
-        });
-        const cd=await cr.json();
-        customerId=cd.id;
-      }
-      if(!customerId){showToast("Erro ao criar cliente no Asaas","error");return;}
-
-      // 2. Create charge
+      const cpfCnpj=(sale.clientCpfCnpj||"").replace(/\D/g,"");
       const dueDate=new Date();dueDate.setDate(dueDate.getDate()+3);
-      const dueDateStr=dueDate.toISOString().split("T")[0];
-      const resp=await fetch("https://api.asaas.com/v3/payments",{
-        method:"POST",
-        headers:{"access_token":apiKey,"Content-Type":"application/json"},
-        body:JSON.stringify({
-          customer:customerId,
-          billingType:"BOLETO",
+
+      const{data,error}=await sb.functions.invoke("asaas-proxy",{
+        body:{
+          action:"gerar_boleto",
+          apiKey,
+          clientName,
+          cpfCnpj,
+          clientPhone:sale.clientPhone||"",
           value:sale.total,
-          dueDate:dueDateStr,
+          dueDate:dueDate.toISOString().split("T")[0],
           description:`Venda The Cott #${(sale.id||"").substring(0,8).toUpperCase()}`,
-        })
+        }
       });
-      const pd=await resp.json();
-      if(!pd.bankSlipUrl){showToast("Erro ao gerar boleto: "+(pd.errors?.[0]?.description||"tente novamente"),"error");return;}
-      
-      // 3. Open PDF
-      window.open(pd.bankSlipUrl,"_blank");
-      showToast("✅ Boleto gerado e aberto!");
+
+      if(error||data?.error){
+        showToast("Erro: "+(data?.error||error?.message||"tente novamente"),"error");
+        return;
+      }
+      if(data?.bankSlipUrl){
+        window.open(data.bankSlipUrl,"_blank");
+        showToast("✅ Boleto gerado!");
+      }
     }catch(e){showToast("Erro: "+e.message,"error");console.error(e);}
   };
 
@@ -3806,12 +3785,20 @@ function Configuracoes({showToast,user}){
     if(!key){showToast("Informe a chave primeiro","error");return;}
     setTesting(true);setTestResult(null);
     try{
-      const r=await fetch("https://api.asaas.com/v3/customers?limit=1",{
-        headers:{"access_token":key,"Content-Type":"application/json"}
+      const{data,error}=await sb.functions.invoke("asaas-proxy",{
+        body:{action:"test",apiKey:key}
       });
-      if(r.ok){setTestResult("ok");showToast("✅ Conexão com Asaas funcionando!");}
-      else{setTestResult("erro");showToast("❌ Chave inválida ou sem permissão","error");}
-    }catch(e){setTestResult("erro");showToast("❌ Erro de conexão: "+e.message,"error");}
+      // Handle both error object and error in data
+      const errMsg=error?.message||data?.error||null;
+      if(errMsg&&!errMsg.includes("non-2xx")){
+        setTestResult("erro");showToast("❌ "+errMsg,"error");
+      }else if(data?.ok||(!error&&!data?.error)){
+        setTestResult("ok");showToast("✅ Conexão com Asaas funcionando!");
+      }else{
+        // non-2xx likely means invalid key
+        setTestResult("erro");showToast("❌ Chave inválida — verifique no Asaas","error");
+      }
+    }catch(e){setTestResult("erro");showToast("❌ Erro: "+e.message,"error");}
     setTesting(false);
   };
 
