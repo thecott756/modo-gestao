@@ -651,6 +651,11 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
   const [pickerSz,setPickerSz]=useState(null);
   const [pickerQty,setPickerQty]=useState(1);
   const [gradeQty,setGradeQty]=useState(1); // how many grades to add at once
+  const [boletoStep,setBoletoStep]=useState(false); // show boleto config step
+  const [boletoQtd,setBoletoQtd]=useState(1);       // 1=30d, 2=30-60, 3=30-60-90
+  const [boletoMulta,setBoletoMulta]=useState(5);
+  const [boletoJuros,setBoletoJuros]=useState(2);
+  const [gerandoBoleto,setGerandoBoleto]=useState(false);
   const [prodSearch,setProdSearch]=useState("");
 
   const isWholesale=selClient&&selClient.type==="wholesale";
@@ -710,28 +715,40 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
     setFreight(f=>({...f,price:prices[f.service]||18.50,calc:true}));
   };
 
-  const gerarBoleto=async(sale)=>{
+  const gerarBoleto=async(sale, returnResult=false)=>{
     let apiKey="",cfg={};
     try{
       const{data}=await sb.from("nfe_config").select("*").eq("id",1).single();
       apiKey=data?.asaas_key||"";
       cfg=data||{};
     }catch(e){}
-    if(!apiKey){showToast("Configure a chave Asaas em ⚙ Configurações","error");return;}
+    if(!apiKey){showToast("Configure a chave Asaas em ⚙ Configurações","error");return null;}
 
-    showToast("Gerando boleto...");
+    if(!returnResult)showToast("Gerando boleto...");
     try{
       const clientName=(sale.clientName||"Avulso").replace(/^[\d.\s]+/,"");
       const cpfCnpj=(sale.clientCpfCnpj||"").replace(/\D/g,"");
-      const dias=cfg.boleto_dias_venc||3;
-      const dueDate=new Date();dueDate.setDate(dueDate.getDate()+dias);
 
-      // Build fine/interest/discount params
+      // Use override dueDate or calculate from config
+      let dueDateStr=sale._dueDate||"";
+      if(!dueDateStr){
+        const dias=cfg.boleto_dias_venc||3;
+        const dueDate=new Date();dueDate.setDate(dueDate.getDate()+dias);
+        dueDateStr=dueDate.toISOString().split("T")[0];
+      }
+
+      // Multa and juros: use sale override or config
+      const multa=sale._multa!=null?sale._multa:(cfg.boleto_multa||0);
+      const juros=sale._juros!=null?sale._juros:(cfg.boleto_juros||0);
+
+      // Description with parcela info
+      const parcelaInfo=sale._parcela?` (${sale._parcela}/${sale._totalParcelas})`:"";
+      const description=`Venda The Cott #${(sale.id||"").substring(0,8).toUpperCase()}${parcelaInfo}`;
+
       const extras={};
-      if((cfg.boleto_multa||0)>0)  extras.fine={value:cfg.boleto_multa};
-      if((cfg.boleto_juros||0)>0)  extras.interest={value:cfg.boleto_juros};
+      if(multa>0)  extras.fine={value:multa};
+      if(juros>0)  extras.interest={value:juros};
       if((cfg.boleto_desc_pct||0)>0&&(cfg.boleto_desc_dias||0)>0){
-        const discDate=new Date();discDate.setDate(discDate.getDate()+(dias-cfg.boleto_desc_dias));
         extras.discount={value:cfg.boleto_desc_pct,dueDateLimitDays:cfg.boleto_desc_dias,type:"PERCENTAGE"};
       }
 
@@ -743,21 +760,24 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
           cpfCnpj,
           clientPhone:sale.clientPhone||"",
           value:sale.total,
-          dueDate:dueDate.toISOString().split("T")[0],
-          description:`Venda The Cott #${(sale.id||"").substring(0,8).toUpperCase()}`,
+          dueDate:dueDateStr,
+          description,
           ...extras,
         }
       });
 
       if(error||data?.error){
         showToast("Erro: "+(data?.error||error?.message||"tente novamente"),"error");
-        return;
+        return null;
       }
       if(data?.bankSlipUrl){
-        window.open(data.bankSlipUrl,"_blank");
-        showToast("✅ Boleto gerado!");
+        if(!returnResult)window.open(data.bankSlipUrl,"_blank");
+        else window.open(data.bankSlipUrl,"_blank");
+        if(!returnResult)showToast("✅ Boleto gerado!");
+        return data;
       }
-    }catch(e){showToast("Erro: "+e.message,"error");console.error(e);}
+      return null;
+    }catch(e){showToast("Erro: "+e.message,"error");console.error(e);return null;}
   };
 
   const finalize=async()=>{
@@ -929,7 +949,7 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
     setClients(p=>[...p,{...c,cpf_cnpj:c.cpfCnpj}]);setSelClient(c);setStep("sale");showToast("Cliente cadastrado!");
   };
 
-  const resetSale=()=>{setStep("mode");setClientMode(null);setSelClient(null);setCart([]);setNewClient(blankC);setAppliedPromo(null);setPromoCode("");setSaleMode("");setPayStep(0);setPayments([]);setPayAmt("");setPrinted(false);};
+  const resetSale=()=>{setStep("mode");setClientMode(null);setSelClient(null);setCart([]);setNewClient(blankC);setAppliedPromo(null);setPromoCode("");setSaleMode("");setPayStep(0);setPayments([]);setPayAmt("");setPrinted(false);setBoletoStep(false);setBoletoQtd(1);};
 
   // ── STEP: MODE ──
   if(step==="mode")return(
@@ -1151,36 +1171,158 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
           }} full sz="lg" disabled={saving||!done}>{saving?"Salvando...":"✅ Confirmar e Finalizar"}</Btn>
         )}
 
-        {/* After finalize: show print button immediately */}
-        {receipt&&(
-          <div style={{marginTop:4,display:"flex",flexDirection:"column",gap:10}}>
-            <div style={{background:C.greenLt,border:`1px solid ${C.green}`,borderRadius:10,padding:"14px 18px",display:"flex",alignItems:"center",gap:12}}>
-              <span style={{fontSize:24}}>🎉</span>
-              <div style={{flex:1}}>
-                <div style={{fontWeight:700,color:C.green,fontSize:15}}>Venda finalizada!</div>
-                <div style={{fontSize:12,color:C.green}}>{fmt(receipt.total)} · {receipt.paymentMethod}</div>
+        {/* ── APÓS FINALIZAR ── */}
+        {receipt&&!boletoStep&&(
+          <div style={{display:"flex",flexDirection:"column",gap:10,marginTop:4}}>
+
+            {/* 1. Pagamento completo */}
+            <div style={{background:C.greenLt,border:`1px solid ${C.green}`,borderRadius:10,padding:"12px 16px",display:"flex",alignItems:"center",gap:10}}>
+              <span style={{fontSize:22}}>✅</span>
+              <div>
+                <div style={{fontWeight:700,color:C.green,fontSize:14}}>Pagamento completo!</div>
+                <div style={{fontSize:12,color:C.green}}>{fmt(receipt.total)} · {payments.map(p=>p.method).join(", ")||receipt.paymentMethod}</div>
+                {payments.some(p=>p.method==="dinheiro")&&<div style={{fontSize:12,color:C.green}}>Troco: {fmt(Math.max(0,payments.reduce((a,b)=>a+b.amount,0)-receipt.total))}</div>}
               </div>
             </div>
+
+            {/* 2. Imprimir comprovante */}
             <Btn v="gold" onClick={()=>{printReceipt(receipt);setPrinted(true);}} full sz="lg">
               🖨️ Imprimir Comprovante
             </Btn>
             {!printed&&(
-              <div style={{background:"#FFF8E7",border:`1px solid ${C.gold}`,borderRadius:8,padding:"9px 14px",fontSize:12.5,color:"#7A5C00",display:"flex",alignItems:"center",gap:8}}>
+              <div style={{background:"#FFF8E7",border:`1px solid ${C.gold}`,borderRadius:8,padding:"8px 13px",fontSize:12,color:"#7A5C00",display:"flex",alignItems:"center",gap:8}}>
                 <span>⚠️</span> Você ainda não imprimiu o comprovante!
               </div>
             )}
             {printed&&(
-              <div style={{background:C.greenLt,borderRadius:8,padding:"9px 14px",fontSize:12.5,color:C.green,display:"flex",alignItems:"center",gap:8}}>
+              <div style={{background:C.greenLt,borderRadius:8,padding:"8px 13px",fontSize:12,color:C.green,display:"flex",alignItems:"center",gap:8}}>
                 <span>✅</span> Comprovante impresso.
               </div>
             )}
-            <Btn v="secondary" onClick={()=>gerarBoleto({...receipt,clientCpfCnpj:selClient?.cpf_cnpj||selClient?.cpf||"",clientPhone:selClient?.phone||""})} full>
-              🧾 Gerar Boleto (Asaas)
-            </Btn>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-              <Btn v="secondary" onClick={()=>sendWA(receipt)}>📱 WhatsApp</Btn>
-              <Btn v="ghost" onClick={()=>{setReceipt(null);resetSale();}}>🛒 Nova Venda</Btn>
+
+            {/* 3. Boleto — só aparece se pagamento for boleto */}
+            {receipt.paymentMethod==="boleto"&&(
+              <Btn v="secondary" onClick={()=>setBoletoStep(true)} full>
+                🧾 Configurar e Gerar Boleto
+              </Btn>
+            )}
+
+            {/* 4. WhatsApp */}
+            <Btn v="success" onClick={()=>sendWA(receipt)} full>📱 Enviar por WhatsApp</Btn>
+          </div>
+        )}
+
+        {/* ── STEP: CONFIGURAR BOLETO ── */}
+        {receipt&&boletoStep&&(
+          <div style={{display:"flex",flexDirection:"column",gap:12,marginTop:4}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <button onClick={()=>setBoletoStep(false)} style={{background:"none",border:"none",color:C.inkMd,cursor:"pointer",fontSize:20}}>←</button>
+              <div style={{fontWeight:700,fontSize:16}}>Configurar Boleto</div>
             </div>
+
+            {/* Valor */}
+            <Card>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:C.inkMd,marginBottom:4}}><span>Valor total</span><div className="cor" style={{fontSize:22,color:C.green}}>{fmt(receipt.total)}</div></div>
+              <HR m="8px 0 8px"/>
+
+              {/* Parcelamento */}
+              <SectionTitle>Parcelamento</SectionTitle>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:14}}>
+                {[
+                  [1,"1×","Vence em 30 dias"],
+                  [2,"2×","30 e 60 dias"],
+                  [3,"3×","30, 60 e 90 dias"],
+                ].map(([v,l,sub])=>(
+                  <button key={v} onClick={()=>setBoletoQtd(v)}
+                    style={{padding:"12px 8px",borderRadius:9,border:`2px solid ${boletoQtd===v?C.gold:C.border}`,background:boletoQtd===v?C.goldLt:"transparent",cursor:"pointer",textAlign:"center",transition:"all .12s"}}>
+                    <div style={{fontWeight:700,fontSize:18,color:boletoQtd===v?C.gold:C.ink}}>{l}</div>
+                    <div style={{fontSize:10,color:boletoQtd===v?C.gold:C.inkLt,marginTop:2}}>{sub}</div>
+                    <div style={{fontSize:11,fontWeight:600,color:boletoQtd===v?C.gold:C.inkMd,marginTop:3}}>{fmt(receipt.total/v)}/boleto</div>
+                  </button>
+                ))}
+              </div>
+
+              {/* Multa e Juros */}
+              <SectionTitle>Multa e Juros por atraso</SectionTitle>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+                <div>
+                  <div style={{fontSize:11.5,color:C.inkLt,marginBottom:5}}>Multa (máx. 2% legal — cobrado 1×)</div>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <input type="number" min={0} max={10} step={0.5} value={boletoMulta}
+                      onChange={e=>setBoletoMulta(parseFloat(e.target.value)||0)}
+                      style={{width:70,background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",fontSize:15,fontWeight:600,textAlign:"center",outline:"none",color:C.ink}}/>
+                    <span style={{fontWeight:600,color:C.inkMd}}>%</span>
+                  </div>
+                </div>
+                <div>
+                  <div style={{fontSize:11.5,color:C.inkLt,marginBottom:5}}>Juros (máx. 1% a.m. — pro-rata)</div>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <input type="number" min={0} max={5} step={0.5} value={boletoJuros}
+                      onChange={e=>setBoletoJuros(parseFloat(e.target.value)||0)}
+                      style={{width:70,background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",fontSize:15,fontWeight:600,textAlign:"center",outline:"none",color:C.ink}}/>
+                    <span style={{fontWeight:600,color:C.inkMd}}>% a.m.</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Preview */}
+              <div style={{background:C.hover,borderRadius:8,padding:"10px 13px",fontSize:12.5,color:C.inkMd,marginBottom:14}}>
+                <div style={{fontWeight:600,color:C.ink,marginBottom:5}}>📋 Resumo</div>
+                {Array.from({length:boletoQtd},(_,i)=>{
+                  const d=new Date();d.setDate(d.getDate()+30*(i+1));
+                  return(
+                    <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"3px 0",borderBottom:`1px solid ${C.border}`}}>
+                      <span>Boleto {i+1} — {d.toLocaleDateString("pt-BR")}</span>
+                      <strong style={{color:C.green}}>{fmt(receipt.total/boletoQtd)}</strong>
+                    </div>
+                  );
+                })}
+                <div style={{marginTop:6,fontSize:11,color:C.inkFt}}>
+                  Multa {boletoMulta}% · Juros {boletoJuros}% a.m. após vencimento
+                </div>
+              </div>
+            </Card>
+
+            <Btn v="gold" full sz="lg" disabled={gerandoBoleto} onClick={async()=>{
+              setGerandoBoleto(true);
+              const parcelas=Array.from({length:boletoQtd},(_,i)=>{
+                const d=new Date();d.setDate(d.getDate()+30*(i+1));
+                return d.toISOString().split("T")[0];
+              });
+              let allOk=true;
+              let lastUrl="";
+              for(let i=0;i<parcelas.length;i++){
+                const r=await gerarBoleto({
+                  ...receipt,
+                  total:receipt.total/boletoQtd,
+                  clientCpfCnpj:selClient?.cpf_cnpj||selClient?.cpf||"",
+                  clientPhone:selClient?.phone||"",
+                  _dueDate:parcelas[i],
+                  _parcela:i+1,
+                  _totalParcelas:boletoQtd,
+                  _multa:boletoMulta,
+                  _juros:boletoJuros,
+                },true);
+                if(r?.bankSlipUrl)lastUrl=r.bankSlipUrl;
+                else allOk=false;
+              }
+              if(allOk)showToast(`✅ ${boletoQtd} boleto(s) gerado(s)!`);
+              else showToast("Alguns boletos não foram gerados","error");
+
+              // Print receipt too
+              printReceipt(receipt);setPrinted(true);
+
+              // Send via WhatsApp
+              if(selClient?.phone&&lastUrl){
+                const phone=(selClient.phone||"").replace(/\D/g,"");
+                const msg=encodeURIComponent(`*BOLETO — THE COTT*\n${boletoQtd} boleto(s) de ${fmt(receipt.total/boletoQtd)}\nLink: ${lastUrl}\n\nComprovante de compra em anexo.`);
+                window.open(`https://wa.me/55${phone}?text=${msg}`,"_blank");
+              }
+              setGerandoBoleto(false);
+              setBoletoStep(false);
+            }}>
+              {gerandoBoleto?`Gerando ${boletoQtd} boleto(s)...`:`🧾 Gerar ${boletoQtd} Boleto(s) + Imprimir + WhatsApp`}
+            </Btn>
           </div>
         )}
       </div>
