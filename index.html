@@ -95,8 +95,8 @@ const CAT_COLOR={"Camiseta":"#D4A574","Calça":"#7B9EA6","Vestido":"#C4A0B5","Bl
 const SIZES_NUM="34,36,38,40,42,44,46,48,50,52";
 const SIZES_LET="PP,P,M,G,GG,XG,XGG,XL";
 
-const APP_VERSION="2.5.0";
-const APP_BUILD=new Date("2026-03-16").toLocaleDateString("pt-BR");
+const APP_VERSION="2.5.1";
+const APP_BUILD=new Date("2026-03-17").toLocaleDateString("pt-BR");
 const fmt=v=>`R$ ${Number(v||0).toFixed(2).replace(".",",")}`;
 const fmtD=d=>new Date(d).toLocaleString("pt-BR");
 const fmtDS=d=>new Date(d).toLocaleDateString("pt-BR");
@@ -290,13 +290,32 @@ function App(){
 
   const showToast=(msg,type="success")=>{setToast({msg,type});setTimeout(()=>setToast({msg:"",type:"success"}),3200);};
 
-  // ── AUTO LOGOUT AT 12h AND 18h ──
+  // ── AUTO LOGOUT: horários fixos 12h/18h + inatividade 8h ──
+  const lastActivity=useRef(Date.now());
+  const INACTIVITY_LIMIT=8*60*60*1000; // 8 horas
+
+  // Atualiza timestamp de atividade em qualquer interação
   useEffect(()=>{
+    const touch=()=>{lastActivity.current=Date.now();};
+    ["mousemove","mousedown","keydown","touchstart","scroll"].forEach(e=>window.addEventListener(e,touch,{passive:true}));
+    return()=>["mousemove","mousedown","keydown","touchstart","scroll"].forEach(e=>window.removeEventListener(e,touch));
+  },[]);
+
+  useEffect(()=>{
+    if(!user)return;
     const check=()=>{
-      const h=new Date().getHours(),m=new Date().getMinutes();
-      if((h===12||h===18)&&m===0&&user){
-        setUser(null);
-        showToast("Sessão encerrada automaticamente.","info");
+      const now=new Date();
+      const h=now.getHours(),m=now.getMinutes();
+      // Horários fixos
+      if((h===12||h===18)&&m===0){
+        setUser(null);setChannel(null);
+        showToast("Sessão encerrada (horário de fechamento).","info");
+        return;
+      }
+      // Inatividade
+      if(Date.now()-lastActivity.current>INACTIVITY_LIMIT){
+        setUser(null);setChannel(null);
+        showToast("Sessão encerrada por inatividade (8h).","info");
       }
     };
     const t=setInterval(check,60000);
@@ -592,6 +611,7 @@ function Home({setTab,user,products,stkG,stkL,sales}){
   ].filter(s=>user.role==="admin"||user.role==="gerente"||["pdv","clientes"].includes(s.id));
 
   const changelog=[
+    {v:"2.5.1",d:"17/03/2026",items:["Logout por inatividade (8h) + horários fixos 12h/18h","Carrinho salvo automaticamente no navegador (offline)","Restauração de rascunho ao voltar ao sistema","Indicador de sem internet com bloqueio de finalização"]},
     {v:"2.5.0",d:"16/03/2026",items:["Dashboard como tela inicial com alertas de clientes","Produtos agrupados por categoria na venda","Grade exclusiva para atacado","Cupom de desconto inline no carrinho","Verificação em 2 etapas nas Configurações","⚙ Configurações movida para engrenagem no rodapé","Botão voltar no pagamento corrigido","Aviso de comprovante removido"]},
     {v:"2.4.0",d:"14/03/2026",items:["Geração de boletos Asaas com parcelamento 1×/2×/3×","Envio de comprovante por e-mail via Resend","Configuração de multa, juros e desconto por boleto","Devoluções com restauração de estoque"]},
     {v:"2.3.0",d:"14/03/2026",items:["Importação de contagem de estoque via Excel","Aba Devoluções independente","Transferência com grade completa","Tamanhos ordenados PP→P→M→G..."]},
@@ -713,14 +733,66 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
   const [pickerSz,setPickerSz]=useState(null);
   const [pickerQty,setPickerQty]=useState(1);
   const [gradeQty,setGradeQty]=useState(1); // how many grades to add at once
-  const [boletoStep,setBoletoStep]=useState(false); // show boleto config step
-  const [boletoQtd,setBoletoQtd]=useState(1);       // 1=30d, 2=30-60, 3=30-60-90
+  const [boletoStep,setBoletoStep]=useState(false);
+  const [boletoQtd,setBoletoQtd]=useState(1);
   const [boletoMulta,setBoletoMulta]=useState(5);
   const [boletoJuros,setBoletoJuros]=useState(2);
   const [gerandoBoleto,setGerandoBoleto]=useState(false);
+  const [offlineMode,setOfflineMode]=useState(false);
+  const [hasDraft,setHasDraft]=useState(false);
+  const DRAFT_KEY="modo_cart_draft_"+channel;
   const [prodSearch,setProdSearch]=useState("");
 
   const isWholesale=selClient&&selClient.type==="wholesale";
+
+  // ── OFFLINE: monitor connection ──
+  useEffect(()=>{
+    const on=()=>setOfflineMode(false);
+    const off=()=>setOfflineMode(true);
+    window.addEventListener("online",on);
+    window.addEventListener("offline",off);
+    setOfflineMode(!navigator.onLine);
+    return()=>{window.removeEventListener("online",on);window.removeEventListener("offline",off);};
+  },[]);
+
+  // ── DRAFT: auto-save cart to localStorage ──
+  useEffect(()=>{
+    if(cart.length===0&&!selClient&&!saleMode)return;
+    try{
+      localStorage.setItem(DRAFT_KEY,JSON.stringify({
+        cart,selClient,saleMode,appliedPromo,promoCode,
+        savedAt:new Date().toISOString()
+      }));
+    }catch(e){}
+  },[cart,selClient,saleMode,appliedPromo]);
+
+  // ── DRAFT: check on mount ──
+  useEffect(()=>{
+    try{
+      const raw=localStorage.getItem(DRAFT_KEY);
+      if(raw){const d=JSON.parse(raw);if(d.cart?.length>0||d.selClient)setHasDraft(true);}
+    }catch(e){}
+  },[]);
+
+  const restoreDraft=()=>{
+    try{
+      const raw=localStorage.getItem(DRAFT_KEY);
+      if(!raw)return;
+      const d=JSON.parse(raw);
+      if(d.cart?.length>0){setCart(d.cart);}
+      if(d.selClient){setSelClient(d.selClient);setClientMode("cadastrado");}
+      if(d.saleMode){setSaleMode(d.saleMode);}
+      if(d.appliedPromo){setAppliedPromo(d.appliedPromo);setPromoCode(d.promoCode||"");}
+      setStep(d.saleMode?"sale":"mode");
+      setHasDraft(false);
+      showToast("✅ Rascunho restaurado!");
+    }catch(e){showToast("Erro ao restaurar rascunho","error");}
+  };
+
+  const clearDraft=()=>{
+    try{localStorage.removeItem(DRAFT_KEY);}catch(e){}
+    setHasDraft(false);
+  };
   const prod=products.find(p=>p.id===Number(selProd));
   const getPrice=p=>isWholesale?(p.wholesalePrice||p.retailPrice):p.retailPrice;
   const getStk=(pId,sz)=>{
@@ -908,6 +980,9 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
       setPrinted(false);
       setWpPhone(selClient?.phone||"");
       setWpEmail(selClient?.email||"");
+      // Clear draft on successful save
+      try{localStorage.removeItem(DRAFT_KEY);}catch(e){}
+      setHasDraft(false);
       setCart([]);setPaid(0);setAppliedPromo(null);setPromoCode("");
       setFreight({cep:"",service:"pac",price:0,calc:false});
       showToast("Venda finalizada!");
@@ -1058,7 +1133,7 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
     setClients(p=>[...p,{...c,cpf_cnpj:c.cpfCnpj}]);setSelClient(c);setStep("sale");showToast("Cliente cadastrado!");
   };
 
-  const resetSale=()=>{setStep("mode");setClientMode(null);setSelClient(null);setCart([]);setNewClient(blankC);setAppliedPromo(null);setPromoCode("");setSaleMode("");setPayStep(0);setPayments([]);setPayAmt("");setPrinted(false);setBoletoStep(false);setBoletoQtd(1);};
+  const resetSale=()=>{setStep("mode");setClientMode(null);setSelClient(null);setCart([]);setNewClient(blankC);setAppliedPromo(null);setPromoCode("");setSaleMode("");setPayStep(0);setPayments([]);setPayAmt("");setPrinted(false);setBoletoStep(false);setBoletoQtd(1);try{localStorage.removeItem(DRAFT_KEY);}catch(e){}setHasDraft(false);};
 
   // ── STEP: MODE ──
   if(step==="mode")return(
@@ -1460,6 +1535,30 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
 
   return(
     <div className="fu">
+      {/* Offline + Draft banners */}
+      {offlineMode&&(
+        <div style={{background:"#FFF0F0",border:`1px solid ${C.red}`,borderRadius:8,padding:"9px 14px",marginBottom:10,display:"flex",alignItems:"center",gap:10,fontSize:13}}>
+          <span style={{fontSize:18}}>📵</span>
+          <div style={{flex:1}}>
+            <strong style={{color:C.red}}>Sem internet</strong>
+            <span style={{color:C.red,marginLeft:8,fontSize:12}}>O carrinho está sendo salvo localmente. Finalize quando a conexão voltar.</span>
+          </div>
+        </div>
+      )}
+      {hasDraft&&step==="mode"&&(
+        <div style={{background:"#FFF8E7",border:`1px solid ${C.gold}`,borderRadius:8,padding:"10px 14px",marginBottom:10,display:"flex",alignItems:"center",gap:10}}>
+          <span style={{fontSize:20}}>📋</span>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:600,fontSize:13,color:"#7A5C00"}}>Rascunho de venda encontrado</div>
+            <div style={{fontSize:12,color:"#7A5C00"}}>Havia uma venda em andamento. Deseja continuar?</div>
+          </div>
+          <div style={{display:"flex",gap:6}}>
+            <Btn v="gold" sz="sm" onClick={restoreDraft}>↩ Restaurar</Btn>
+            <Btn v="ghost" sz="sm" onClick={clearDraft}>Descartar</Btn>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:10}}>
         <div>
@@ -1689,7 +1788,12 @@ function PDV({stkG,setStkG,stkL,setStkL,products,clients,setClients,setSales,add
             {appliedPromo&&<div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:C.green,marginBottom:4}}><span>Desconto ({appliedPromo.pct}%)</span><span>-{fmt((subtotal+freightPrice)*appliedPromo.pct/100)}</span></div>}
             <HR m="8px 0 10px"/>
             <div className="cor" style={{fontSize:30,textAlign:"center",marginBottom:14,color:C.green}}>{fmt(total)}</div>
-            <Btn v="success" onClick={()=>{if(cart.length===0){showToast("Carrinho vazio","error");return;}setStep("pagar");setPayments([]);setPayAmt("");}} full sz="lg" disabled={cart.length===0}>
+            {offlineMode&&(
+              <div style={{background:"#FFF0F0",borderRadius:6,padding:"7px 10px",fontSize:11.5,color:C.red,marginBottom:8,display:"flex",gap:6,alignItems:"center"}}>
+                <span>📵</span> Sem internet — pagamento bloqueado até reconectar.
+              </div>
+            )}
+            <Btn v="success" onClick={()=>{if(cart.length===0){showToast("Carrinho vazio","error");return;}if(offlineMode){showToast("Sem internet. Aguarde a conexão voltar.","error");return;}setStep("pagar");setPayments([]);setPayAmt("");}} full sz="lg" disabled={cart.length===0}>
               Prosseguir para pagamento →
             </Btn>
           </Card>
