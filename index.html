@@ -54,9 +54,10 @@ const C={
 };
 
 const USERS=[
-  {id:1,name:"Jhonatan",login:"Jhon", pw:"baily123",  role:"admin"},
-  {id:2,name:"Bia",     login:"bia",  pw:"0208bia",   role:"gerente"},
-  {id:3,name:"Carol",   login:"carol",pw:"the123cott",role:"vendedora"},
+  {id:1,name:"Jhonatan",login:"Jhon",   pw:"baily123",   role:"admin"},
+  {id:2,name:"Bia",     login:"bia",    pw:"0208bia",    role:"gerente"},
+  {id:3,name:"Carol",   login:"carol",  pw:"the123cott", role:"vendedora"},
+  {id:4,name:"Amanda",  login:"Amanda", pw:"thecott",    role:"gerente"},
 ];
 // ── CHANNELS (lojas/pontos de venda) ──
 const CHANNELS=[
@@ -70,13 +71,13 @@ const CHANNELS=[
 // Which channels each role can access
 const ROLE_CHANNELS={
   admin:    ["galpao","centro"],
-  gerente:  ["galpao","centro"],
+  gerente:  ["centro"],
   vendedora:["centro"],
   galpao:   ["galpao"],
 };
 const ROLE_TABS={
   admin:    ["dashboard","pdv","clientes","galpao","loja","transfer","produtos","vendas","devolucoes","etiquetas","nfe","atividades"],
-  gerente:  ["dashboard","pdv","clientes","galpao","loja","transfer","produtos","vendas","devolucoes","etiquetas"],
+  gerente:  ["dashboard","pdv","clientes","transfer","produtos","vendas","devolucoes","etiquetas"],
   vendedora:["dashboard","pdv","clientes","vendas","devolucoes"],
   galpao:   ["dashboard","galpao","loja","transfer","produtos","etiquetas"],
 };
