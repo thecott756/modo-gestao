@@ -356,16 +356,20 @@ function App(){
         sb.from("issued_nfe").select("*").order("date",{ascending:false}),
         sb.from("activities").select("*").order("date",{ascending:false}).limit(200),
       ]);
-      if(p.data)setProducts(p.data.map(x=>({...x,sizes:x.sizes||[],imageUrl:x.image_url||"",retailPrice:x.retail_price,wholesalePrice:x.wholesale_price,costPrice:x.cost_price})));
-      if(sg.data)setStkG(sg.data.map(x=>({pId:x.product_id,sz:x.size,qty:x.qty,_id:x.id})));
-      if(sl.data)setStkL(sl.data.map(x=>({pId:x.product_id,sz:x.size,qty:x.qty,_id:x.id})));
-      if(cl.data)setClients(cl.data);
+      if(p.error)showToast(`Erro produtos: ${p.error.message}`,"error");
+      else if(p.data)setProducts(p.data.map(x=>({...x,sizes:x.sizes||[],imageUrl:x.image_url||"",retailPrice:x.retail_price,wholesalePrice:x.wholesale_price,costPrice:x.cost_price})));
+      if(sg.error)showToast(`Erro estoque galpão: ${sg.error.message}`,"error");
+      else if(sg.data)setStkG(sg.data.map(x=>({pId:x.product_id,sz:x.size,qty:x.qty,_id:x.id})));
+      if(sl.error)showToast(`Erro estoque loja: ${sl.error.message}`,"error");
+      else if(sl.data)setStkL(sl.data.map(x=>({pId:x.product_id,sz:x.size,qty:x.qty,_id:x.id})));
+      if(cl.error)showToast(`Erro clientes: ${cl.error.message}`,"error");
+      else if(cl.data)setClients(cl.data);
       if(sa.data)setSales(sa.data.map(x=>({...x,discountAmt:x.discount_amt,discountPct:x.discount_pct,freightPrice:x.freight_price,isWholesale:x.is_wholesale,withNFe:x.with_nfe,nfeNum:x.nfe_num,clientName:x.client_name,clientPhone:x.client_phone,tradeDeadline:x.trade_deadline,paymentMethod:x.payment_method,paidAmount:x.paid_amount,change:x.change_amount})));
       if(mv.data)setMovements(mv.data.map(x=>({...x,user:x.username,desc:x.descricao})));
       if(nfe.data)setNfeConfigState({cnpj:nfe.data.cnpj||"",ie:nfe.data.ie||"",razaoSocial:nfe.data.razao_social||"",uf:nfe.data.uf||"SP",crt:nfe.data.crt||"1",ambiente:nfe.data.ambiente||"homologacao",serie:nfe.data.serie||"001",nextNum:nfe.data.next_num||1});
       if(inf.data)setIssuedNFe(inf.data.map(x=>({...x,clientName:x.client_name,clientCpf:x.client_cpf})));
       if(act.data)setActivities(act.data);
-    }catch(e){showToast("Erro ao carregar dados","error");}
+    }catch(e){showToast(`Erro ao carregar dados: ${e.message}`,"error");}
     setLoading(false);
   },[]);
 
