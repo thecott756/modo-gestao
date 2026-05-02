@@ -2229,14 +2229,15 @@ function EstoqueGalpao({products,setProducts,stkG,setStkG,setStkL,addMov,showToa
     setVariants((p.sizes||[]).map(sz=>({sz,retailPrice:String(p.retailPrice||""),wholesalePrice:String(p.wholesalePrice||""),qty:0})));
     setSelId(p.id);setView("editar");
   };
-  const startNew=(cat)=>{setForm({...blank,cat,sku:genSKU("",cat)});setVariants([]);setView("novo");};
+  const startNew=(cat)=>{setForm({...blank,cat,sku:""});setVariants([]);setView("novo");};
 
   const saveProduto=async()=>{
     if(!form.name.trim()){showToast("Nome obrigatório","error");return;}
     if(variants.length===0){showToast("Adicione ao menos um tamanho","error");return;}
     setSaving(true);
     try{
-      const sizes=variants.map(v=>v.sz);const sku=form.sku||genSKU(form.name,form.cat);
+      if(!form.sku.trim()){showToast("SKU obrigatório","error");setSaving(false);return;}
+      const sizes=variants.map(v=>v.sz);const sku=form.sku.trim();
       const retail=parsePR(variants[0]?.retailPrice);const wholesale=parsePR(variants[0]?.wholesalePrice);
       const row={sku,name:form.name.trim(),cat:form.cat,color:form.color,sizes,retail_price:retail,wholesale_price:wholesale,cost_price:0,image_url:"",promo:false};
       const{data,error}=await sb.from("products").insert(row).select().single();
@@ -2339,10 +2340,10 @@ function EstoqueGalpao({products,setProducts,stkG,setStkG,setStkL,addMov,showToa
         <div>
           <Card style={{marginBottom:14}}>
             <SectionTitle>Informações do Produto</SectionTitle>
-            <Fld label="Nome do produto" value={form.name} onChange={v=>{setF("name",v);if(v.length>=3)setF("sku",genSKU(v,form.cat));}} required placeholder="Ex: Calça Jeans Wideleg"/>
+            <Fld label="Nome do produto" value={form.name} onChange={v=>setF("name",v)} required placeholder="Ex: Wideleg Clássica Jeans Amaciado"/>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-              <Fld label="SKU" value={form.sku} onChange={v=>{const clean=v.toUpperCase().replace(/[^A-Z0-9-]/g,"");const m=clean.match(/^([A-Z]{1,3})-?(\d{0,3})$/);if(m){setF("sku",(m[1]+"-"+(m[2]||"")).replace(/-$/,""));}else if(clean.length<=7)setF("sku",clean);}} note="Formato: ABC-001"/>
-              <Fld label="Cor / Referência" value={form.color} onChange={v=>setF("color",v)} placeholder="Ex: Azul"/>
+              <Fld label="SKU / Código" value={form.sku} onChange={v=>setF("sku",v.toUpperCase().replace(/[^A-Z0-9/]/g,""))} required placeholder="Ex: 901, 907/PTA" note="Wideleg: 9XX · Baggy/Mon: 8XX"/>
+              <Fld label="Cor / Referência" value={form.color} onChange={v=>setF("color",v)} placeholder="Ex: Azul, PTA, VER"/>
             </div>
           </Card>
           <Card>
