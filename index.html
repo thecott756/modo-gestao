@@ -2196,13 +2196,41 @@ function Clients({clients,setClients,sales,showToast,logActivity}){
 }
 
 
-// ── PRODUCTS ───────────────────────────────────────────────────────────────
+// ── PRODUTOS + ESTOQUE GALPÃO ──────────────────────────────────────────────
+const SKU_REF={
+  901:'Wideleg Clássica',911:'Wideleg Bolso Pregado',921:'Wideleg Sem Cós',931:'Wideleg Recorte Frontal',
+  801:'Baggy Botão na Perna',811:'Baggy Bolso Pregado',821:'Cenoura My Place',
+  701:'Calça Lycra Clássica',711:'Calça Lycra Flaire',
+  501:'Short Clássico',511:'Short Bolso Pregado',521:'Short Sem Cós',531:'Short Cargo',
+  541:'Short 2 Pregas',551:'Short Bainha Virada',561:'Short Saia',571:'Bermuda ½ Coxa',581:'Bermuda Cargo',
+};
+const SKU_LAV={1:'Amaciado',2:'Destroy + Used',3:'Destroy M + Used',4:'Destroy Claro',5:'Marmorizado',7:'Sarja',8:'Linho/Fio Tinto'};
+const SKU_COR={PTA:'Preto',BRN:'Branco',VER:'Verde',BGE:'Bege',OFF:'Off-White',ROM:'Marrom',MAR:'Marinho'};
+const autoDetectar=(sku)=>{
+  const num=parseInt((sku||"").replace(/[^0-9]/g,"").slice(0,3));
+  if(isNaN(num))return{};
+  const base=Math.floor(num/10)*10+1;
+  const modelo=SKU_REF[base]||"";
+  const lav=SKU_LAV[num%10]||"";
+  const sufMatch=(sku||"").toUpperCase().match(/[-/]([A-Z]{2,3})\*?$/);
+  const corCod=sufMatch?.[1]||"";
+  const cor=SKU_COR[corCod]||corCod||"";
+  const name=[modelo,lav,cor].filter(Boolean).join(" ");
+  let cat="Outro";
+  if(num>=901&&num<=999)cat="Calça";
+  else if(num>=801&&num<=899)cat="Calça";
+  else if(num>=701&&num<=799)cat="Calça";
+  else if(num>=501&&num<=599)cat="Shorts";
+  return{name,cat,color:cor};
+};
+
 function EstoqueGalpao({products,setProducts,stkG,setStkG,setStkL,addMov,showToast,logActivity,user}){
   const isAdmin=user.role==="admin";
   const [view,setView]=useState("list");
   const [search,setSearch]=useState("");
   const [saving,setSaving]=useState(false);
   const [entProd,setEntProd]=useState(null);
+  const [entSearch,setEntSearch]=useState("");
   const [entTipo,setEntTipo]=useState("entrada");
   const [entQtys,setEntQtys]=useState({});
   const [entObs,setEntObs]=useState("");
@@ -2213,15 +2241,8 @@ function EstoqueGalpao({products,setProducts,stkG,setStkG,setStkL,addMov,showToa
   const setF=(k,v)=>setForm(f=>({...f,[k]:v}));
   const getQty=(pId,sz)=>stkG.find(s=>s.pId===pId&&s.sz===sz)?.qty||0;
   const filtered=products.filter(p=>p.name.toLowerCase().includes(search.toLowerCase())||(p.sku||"").toLowerCase().includes(search.toLowerCase()));
+  const entFiltered=entSearch.length>=1?products.filter(p=>(p.sku||"").toLowerCase().includes(entSearch.toLowerCase())||p.name.toLowerCase().includes(entSearch.toLowerCase())):[];
   const parsePR=v=>parseFloat(String(v||"0").replace(",","."))||0;
-  const genSKU=(name,cat)=>{
-    const src=name||cat||"OUT";const words=src.trim().split(/\s+/).filter(Boolean);
-    let prefix;if(words.length>=2){prefix=words.slice(0,3).map(w=>w[0].toUpperCase()).join("");}else{prefix=src.replace(/\s+/g,"").toUpperCase().slice(0,3);}
-    prefix=prefix.slice(0,3);
-    const existing=products.filter(p=>p.sku&&p.sku.startsWith(prefix+"-"));
-    const nums=existing.map(p=>parseInt((p.sku||"").split("-")[1])||0);
-    return prefix+"-"+String((nums.length?Math.max(...nums):0)+1).padStart(3,"0");
-  };
   const setVariant=(sz,key,val)=>setVariants(prev=>prev.map(v=>v.sz===sz?{...v,[key]:val}:v));
   const applyAll=(key,val)=>setVariants(prev=>prev.map(v=>({...v,[key]:val})));
   const startEdit=(p)=>{
@@ -2409,7 +2430,7 @@ function EstoqueGalpao({products,setProducts,stkG,setStkG,setStkL,addMov,showToa
   if(view==="entrada")return(
     <div className="fu">
       <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:24}}>
-        <button onClick={()=>setView("list")} style={{background:"none",border:"none",color:C.inkMd,cursor:"pointer",fontSize:22}}>←</button>
+        <button onClick={()=>{setView("list");setEntProd(null);setEntSearch("");setEntQtys({});}} style={{background:"none",border:"none",color:C.inkMd,cursor:"pointer",fontSize:22}}>←</button>
         <div className="cor" style={{fontSize:28,fontWeight:400}}>Movimentação de Estoque</div>
       </div>
       <Card style={{maxWidth:600}}>
@@ -2423,10 +2444,59 @@ function EstoqueGalpao({products,setProducts,stkG,setStkG,setStkL,addMov,showToa
             </button>
           ))}
         </div>
-        <Fld label="Produto" value={entProd?.id||""} onChange={v=>{setEntProd(products.find(p=>p.id===Number(v))||null);setEntQtys({});}}
-          options={[{value:"",label:"Selecione um produto..."},...products.map(p=>({value:p.id,label:`${p.sku} — ${p.name}`}))]}/>
+
+        {/* BUSCA */}
+        {!entProd&&(<>
+          <div style={{fontSize:11,fontWeight:700,color:C.inkMd,marginBottom:4,letterSpacing:.6,textTransform:"uppercase"}}>Buscar produto por código ou nome</div>
+          <input autoFocus value={entSearch} onChange={e=>{setEntSearch(e.target.value);setEntProd(null);}}
+            placeholder="Ex: 901, 907-PTA, Wideleg..." style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,color:C.ink,padding:"9px 12px",fontSize:13.5,outline:"none",marginBottom:8}}/>
+          {entSearch.length>=1&&entFiltered.length>0&&(
+            <div style={{border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden",marginBottom:8}}>
+              {entFiltered.map(p=>(
+                <div key={p.id} onClick={()=>{setEntProd(p);setEntQtys({});}}
+                  style={{padding:"10px 14px",cursor:"pointer",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}
+                  onMouseEnter={e=>e.currentTarget.style.background=C.hover}
+                  onMouseLeave={e=>e.currentTarget.style.background=""}>
+                  <div>
+                    <span style={{fontWeight:700,color:C.ink,marginRight:8}}>{p.sku}</span>
+                    <span style={{fontSize:13,color:C.inkMd}}>{p.name}</span>
+                  </div>
+                  <span style={{fontSize:12,color:C.inkLt}}>{sortSizes(p.sizes||[]).length} tam.</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {entSearch.length>=2&&entFiltered.length===0&&(()=>{
+            const det=autoDetectar(entSearch);
+            return(
+              <div style={{background:C.goldLt,border:`1px solid ${C.gold}40`,borderRadius:8,padding:14,marginBottom:8}}>
+                <div style={{fontSize:13,color:C.inkMd,marginBottom:8}}>
+                  Nenhum produto encontrado para <strong>"{entSearch}"</strong>
+                  {det.name&&<span> — parece ser: <strong>{det.name}</strong></span>}
+                </div>
+                {isAdmin&&<button onClick={()=>{
+                  const d=autoDetectar(entSearch);
+                  setForm({...blank,sku:entSearch.toUpperCase(),name:d.name||"",cat:d.cat||"Outro",color:d.color||""});
+                  setVariants([]);setView("novo");
+                }} style={{padding:"8px 16px",borderRadius:7,border:"none",background:C.ink,color:"#fff",cursor:"pointer",fontSize:13,fontWeight:600}}>
+                  + Cadastrar "{entSearch.toUpperCase()}"
+                </button>}
+                {!isAdmin&&<div style={{fontSize:12,color:C.inkMd}}>Peça ao administrador para cadastrar este produto.</div>}
+              </div>
+            );
+          })()}
+        </>)}
+
+        {/* PRODUTO SELECIONADO */}
         {entProd&&(<>
-          <SectionTitle style={{marginTop:12}}>Quantidades por tamanho</SectionTitle>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",background:C.greenLt,borderRadius:8,marginBottom:14,border:`1px solid ${C.green}30`}}>
+            <div>
+              <span style={{fontWeight:700,color:C.ink,marginRight:8}}>{entProd.sku}</span>
+              <span style={{fontSize:13,color:C.inkMd}}>{entProd.name}</span>
+            </div>
+            <button onClick={()=>{setEntProd(null);setEntQtys({});setEntSearch("");}} style={{background:"none",border:"none",color:C.inkLt,cursor:"pointer",fontSize:18}}>×</button>
+          </div>
+          <SectionTitle>Quantidades por tamanho</SectionTitle>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(100px,1fr))",gap:8,marginBottom:12}}>
             {sortSizes(entProd.sizes||[]).map(sz=>(
               <div key={sz} style={{textAlign:"center"}}>
@@ -2439,9 +2509,10 @@ function EstoqueGalpao({products,setProducts,stkG,setStkG,setStkL,addMov,showToa
           </div>
           <Fld label="Observação (opcional)" value={entObs} onChange={setEntObs} placeholder="Ex: Chegada do fornecedor"/>
         </>)}
-        <Btn onClick={handleEntrada} full sz="lg" disabled={saving} v={entTipo==="entrada"?"success":"danger"} style={{marginTop:8}}>
+
+        {entProd&&<Btn onClick={handleEntrada} full sz="lg" disabled={saving} v={entTipo==="entrada"?"success":"danger"} style={{marginTop:8}}>
           {saving?"Salvando...":(entTipo==="entrada"?"Registrar Entrada":"Registrar Saída")}
-        </Btn>
+        </Btn>}
       </Card>
     </div>
   );
