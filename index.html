@@ -76,10 +76,10 @@ const ROLE_CHANNELS={
   galpao:   ["galpao"],
 };
 const ROLE_TABS={
-  admin:    ["dashboard","pdv","clientes","galpao","loja","transfer","produtos","vendas","devolucoes","etiquetas","nfe","atividades"],
+  admin:    ["dashboard","pdv","clientes","estoque","loja","transfer","produtos","vendas","devolucoes","etiquetas","nfe","atividades"],
   gerente:  ["dashboard","pdv","clientes","transfer","produtos","vendas","devolucoes","etiquetas"],
   vendedora:["dashboard","pdv","clientes","vendas","devolucoes"],
-  galpao:   ["dashboard","galpao","loja","transfer","produtos","etiquetas"],
+  galpao:   ["dashboard","estoque","loja","transfer","etiquetas"],
 };
 // Size sort order
 const SIZE_ORDER=["PP","P","M","G","GG","XG","XGG","XL","34","36","38","40","42","44","46","48","50","52","54","56"];
@@ -455,7 +455,7 @@ function App(){
     {id:"dashboard",  label:"Início",        icon:"⌂"},
     {id:"pdv",        label:"Venda",         icon:"◉"},
     {id:"clientes",   label:"Clientes",      icon:"◎"},
-    {id:"galpao",     label:"Est. Galpão",   icon:"◧"},
+    {id:"estoque",     label:"Estoque",        icon:"◧"},
     {id:"loja",       label:"Est. Loja",     icon:"◨"},
     {id:"transfer",   label:"Transferência", icon:"⇌"},
     {id:"produtos",   label:"Produtos",      icon:"◻"},
@@ -470,13 +470,17 @@ function App(){
     const inRole=ROLE_TABS[user.role]?.includes(n.id);
     const inChannel=curChannel.tabs.includes(n.id);
     // Stock pages: filter by channel
-    if(n.id==="galpao"){
+    if(n.id==="estoque"){
       if(channel==="centro")return false;
       return inRole;
     }
     if(n.id==="loja"){
       if(channel==="galpao")return false;
       return inRole;
+    }
+    if(n.id==="produtos"){
+      if(channel==="galpao")return false;
+      return inRole&&inChannel;
     }
     // Config always visible for admin/gerente
     if(n.id==="config")return user.role==="admin"||user.role==="gerente";
@@ -540,7 +544,7 @@ function App(){
 
           {tab==="pdv"       &&<PDV stkG={stkG} setStkG={setStkG} stkL={stkL} setStkL={setStkL} products={products} clients={clients} setClients={setClients} setSales={setSales} addMov={addMov} showToast={showToast} user={user} logActivity={logActivity} channel={channel} curChannel={curChannel}/>}
           {tab==="clientes"  &&<Clients clients={clients} setClients={setClients} sales={sales} showToast={showToast} logActivity={logActivity}/>}
-          {tab==="galpao"    &&<StockPage title="Galpão" loc="galpao" stock={stkG} setStock={setStkG} products={products} addMov={addMov} showToast={showToast} table="stock_galpao" logActivity={logActivity}/>}
+          {tab==="estoque"   &&<EstoqueGalpao products={products} setProducts={setProducts} stkG={stkG} setStkG={setStkG} setStkL={setStkL} addMov={addMov} showToast={showToast} logActivity={logActivity} user={user}/>}
           {tab==="loja"      &&<StockPage title="Loja" loc="loja" stock={stkL} setStock={setStkL} products={products} addMov={addMov} showToast={showToast} table="stock_loja" logActivity={logActivity}/>}
           {tab==="transfer"  &&<Transfer stkG={stkG} setStkG={setStkG} stkL={stkL} setStkL={setStkL} products={products} addMov={addMov} showToast={showToast} logActivity={logActivity} channel={channel}/>}
           {tab==="produtos"  &&<Products products={products} setProducts={setProducts} setStkG={setStkG} setStkL={setStkL} sales={sales} showToast={showToast} logActivity={logActivity}/>}
@@ -607,7 +611,7 @@ function Home({setTab,user,products,stkG,stkL,sales}){
   const shortcuts=[
     {id:"pdv",    icon:"◉", label:"Nova Venda",     color:C.gold,   bg:C.goldLt},
     {id:"clientes",icon:"◎",label:"Clientes",       color:C.blue,   bg:C.blueLt},
-    {id:"galpao", icon:"◧", label:"Estoque Galpão", color:C.green,  bg:C.greenLt},
+    {id:"estoque", icon:"◧", label:"Estoque",        color:C.green,  bg:C.greenLt},
     {id:"loja",   icon:"◨", label:"Estoque Loja",   color:C.purple, bg:C.purpleLt},
     {id:"transfer",icon:"⇌",label:"Transferência",  color:C.inkMd,  bg:C.hover},
     {id:"produtos",icon:"◻",label:"Produtos",       color:C.inkMd,  bg:C.hover},
@@ -2193,6 +2197,300 @@ function Clients({clients,setClients,sales,showToast,logActivity}){
 
 
 // ── PRODUCTS ───────────────────────────────────────────────────────────────
+function EstoqueGalpao({products,setProducts,stkG,setStkG,setStkL,addMov,showToast,logActivity,user}){
+  const isAdmin=user.role==="admin";
+  const [view,setView]=useState("list");
+  const [search,setSearch]=useState("");
+  const [saving,setSaving]=useState(false);
+  const [entProd,setEntProd]=useState(null);
+  const [entTipo,setEntTipo]=useState("entrada");
+  const [entQtys,setEntQtys]=useState({});
+  const [entObs,setEntObs]=useState("");
+  const blank={name:"",sku:"",cat:"",color:"",sizes:[]};
+  const [form,setForm]=useState(blank);
+  const [variants,setVariants]=useState([]);
+  const [selId,setSelId]=useState(null);
+  const setF=(k,v)=>setForm(f=>({...f,[k]:v}));
+  const getQty=(pId,sz)=>stkG.find(s=>s.pId===pId&&s.sz===sz)?.qty||0;
+  const filtered=products.filter(p=>p.name.toLowerCase().includes(search.toLowerCase())||(p.sku||"").toLowerCase().includes(search.toLowerCase()));
+  const parsePR=v=>parseFloat(String(v||"0").replace(",","."))||0;
+  const genSKU=(name,cat)=>{
+    const src=name||cat||"OUT";const words=src.trim().split(/\s+/).filter(Boolean);
+    let prefix;if(words.length>=2){prefix=words.slice(0,3).map(w=>w[0].toUpperCase()).join("");}else{prefix=src.replace(/\s+/g,"").toUpperCase().slice(0,3);}
+    prefix=prefix.slice(0,3);
+    const existing=products.filter(p=>p.sku&&p.sku.startsWith(prefix+"-"));
+    const nums=existing.map(p=>parseInt((p.sku||"").split("-")[1])||0);
+    return prefix+"-"+String((nums.length?Math.max(...nums):0)+1).padStart(3,"0");
+  };
+  const setVariant=(sz,key,val)=>setVariants(prev=>prev.map(v=>v.sz===sz?{...v,[key]:val}:v));
+  const applyAll=(key,val)=>setVariants(prev=>prev.map(v=>({...v,[key]:val})));
+  const startEdit=(p)=>{
+    setForm({name:p.name,sku:p.sku,cat:p.cat,color:p.color||"",sizes:p.sizes||[]});
+    setVariants((p.sizes||[]).map(sz=>({sz,retailPrice:String(p.retailPrice||""),wholesalePrice:String(p.wholesalePrice||""),qty:0})));
+    setSelId(p.id);setView("editar");
+  };
+  const startNew=(cat)=>{setForm({...blank,cat,sku:genSKU("",cat)});setVariants([]);setView("novo");};
+
+  const saveProduto=async()=>{
+    if(!form.name.trim()){showToast("Nome obrigatório","error");return;}
+    if(variants.length===0){showToast("Adicione ao menos um tamanho","error");return;}
+    setSaving(true);
+    try{
+      const sizes=variants.map(v=>v.sz);const sku=form.sku||genSKU(form.name,form.cat);
+      const retail=parsePR(variants[0]?.retailPrice);const wholesale=parsePR(variants[0]?.wholesalePrice);
+      const row={sku,name:form.name.trim(),cat:form.cat,color:form.color,sizes,retail_price:retail,wholesale_price:wholesale,cost_price:0,image_url:"",promo:false};
+      const{data,error}=await sb.from("products").insert(row).select().single();
+      if(error){showToast("Erro: "+error.message,"error");setSaving(false);return;}
+      if(data){
+        setProducts(p=>[...p,{...data,imageUrl:"",retailPrice:data.retail_price,wholesalePrice:data.wholesale_price,costPrice:0}]);
+        for(const v of variants){
+          await sb.from("stock_galpao").insert({product_id:data.id,size:v.sz,qty:Number(v.qty)||0});
+          await sb.from("stock_loja").insert({product_id:data.id,size:v.sz,qty:0});
+          setStkG(p=>[...p,{pId:data.id,sz:v.sz,qty:Number(v.qty)||0}]);
+          setStkL(p=>[...p,{pId:data.id,sz:v.sz,qty:0}]);
+        }
+        await logActivity("produto_cadastrado",`${sku} — ${form.name}`);
+        showToast("Produto cadastrado!");setView("list");setForm(blank);setVariants([]);
+      }
+    }catch(e){showToast("Erro: "+e.message,"error");}
+    setSaving(false);
+  };
+
+  const saveEditProduto=async()=>{
+    if(!form.name.trim()){showToast("Nome obrigatório","error");return;}
+    setSaving(true);
+    try{
+      const sizes=variants.map(v=>v.sz);
+      const retail=parsePR(variants[0]?.retailPrice);const wholesale=parsePR(variants[0]?.wholesalePrice);
+      const row={name:form.name.trim(),cat:form.cat,color:form.color||"",sizes,retail_price:retail,wholesale_price:wholesale,cost_price:0,promo:false};
+      const{error}=await sb.from("products").update(row).eq("id",selId).select().single();
+      if(error){showToast("Erro: "+error.message,"error");setSaving(false);return;}
+      setProducts(prev=>prev.map(p=>p.id===selId?{...p,...row,retailPrice:retail,wholesalePrice:wholesale,sizes}:p));
+      await logActivity("produto_editado",`${form.sku} — ${form.name}`);
+      showToast("Produto atualizado!");setView("list");setForm(blank);setVariants([]);
+    }catch(e){showToast("Erro: "+e.message,"error");}
+    setSaving(false);
+  };
+
+  const handleEntrada=async()=>{
+    if(!entProd){showToast("Selecione um produto","error");return;}
+    const entries=Object.entries(entQtys).filter(([,q])=>Number(q)>0);
+    if(entries.length===0){showToast("Informe ao menos uma quantidade","error");return;}
+    setSaving(true);
+    try{
+      for(const [sz,q] of entries){
+        const qty=Number(q);const cur=getQty(entProd.id,sz);
+        if(entTipo==="saida"&&qty>cur){showToast(`Estoque insuficiente: ${sz}`,"error");continue;}
+        const newQty=cur+(entTipo==="entrada"?qty:-qty);
+        const existing=stkG.find(s=>s.pId===entProd.id&&s.sz===sz);
+        if(existing?._id){await sb.from("stock_galpao").update({qty:newQty}).eq("id",existing._id);}
+        else{const{data}=await sb.from("stock_galpao").insert({product_id:entProd.id,size:sz,qty:newQty}).select().single();
+          if(data)setStkG(p=>[...p,{pId:entProd.id,sz,qty:newQty,_id:data.id}]);}
+        setStkG(prev=>{const idx=prev.findIndex(s=>s.pId===entProd.id&&s.sz===sz);
+          if(idx>=0){const u=[...prev];u[idx]={...u[idx],qty:newQty};return u;}return prev;});
+        await addMov({type:entTipo,loc:"galpao",desc:`${entProd.name} – Tam ${sz} – ${qty} un.`,obs:entObs});
+      }
+      const total=entries.reduce((a,[,q])=>a+Number(q),0);
+      await logActivity(entTipo==="entrada"?"entrada_estoque":"saida_estoque",`${entProd.name} · ${total} un. · Galpão`);
+      showToast(`${entTipo==="entrada"?"Entrada":"Saída"} registrada! (${total} peças)`);
+      setEntProd(null);setEntQtys({});setEntObs("");setView("list");
+    }catch(e){showToast("Erro: "+e.message,"error");}
+    setSaving(false);
+  };
+
+  // ── CATEGORY PICKER ──
+  if(view==="pickCat")return(
+    <div className="fu">
+      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:28}}>
+        <button onClick={()=>setView("list")} style={{background:"none",border:"none",color:C.inkMd,cursor:"pointer",fontSize:22}}>←</button>
+        <div><div className="cor" style={{fontSize:28,fontWeight:400}}>Incluir Item</div>
+          <div style={{fontSize:13,color:C.inkLt}}>Selecione a categoria</div></div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))",gap:12,maxWidth:600}}>
+        {CATS.map(cat=>{const cc=CAT_COLOR[cat]||"#C8C0B4";return(
+          <button key={cat} onClick={()=>startNew(cat)} style={{padding:"22px 12px",borderRadius:12,border:`1.5px solid ${C.border}`,background:C.surface,cursor:"pointer",textAlign:"center",transition:"all .15s"}}
+            onMouseEnter={e=>{e.currentTarget.style.borderColor=cc;e.currentTarget.style.background=`${cc}12`;}}
+            onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.background=C.surface;}}>
+            <div style={{fontSize:34,marginBottom:8}}>{CAT_ICON[cat]||"📦"}</div>
+            <div style={{fontWeight:600,fontSize:13,color:C.ink}}>{cat}</div>
+          </button>
+        );})}
+      </div>
+    </div>
+  );
+
+  // ── PRODUCT FORM (NOVO / EDITAR) ──
+  if(view==="novo"||view==="editar")return(
+    <div className="fu">
+      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:24}}>
+        <button onClick={()=>view==="novo"?setView("pickCat"):setView("list")} style={{background:"none",border:"none",color:C.inkMd,cursor:"pointer",fontSize:22}}>←</button>
+        <div><div className="cor" style={{fontSize:28,fontWeight:400}}>{view==="editar"?"Editar Produto":"Novo Produto"}</div>
+          {form.cat&&<div style={{fontSize:12,color:C.inkLt,marginTop:2}}>{CAT_ICON[form.cat]} {form.cat}</div>}</div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 320px",gap:16,alignItems:"start"}}>
+        <div>
+          <Card style={{marginBottom:14}}>
+            <SectionTitle>Informações do Produto</SectionTitle>
+            <Fld label="Nome do produto" value={form.name} onChange={v=>{setF("name",v);if(v.length>=3)setF("sku",genSKU(v,form.cat));}} required placeholder="Ex: Calça Jeans Wideleg"/>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <Fld label="SKU" value={form.sku} onChange={v=>{const clean=v.toUpperCase().replace(/[^A-Z0-9-]/g,"");const m=clean.match(/^([A-Z]{1,3})-?(\d{0,3})$/);if(m){setF("sku",(m[1]+"-"+(m[2]||"")).replace(/-$/,""));}else if(clean.length<=7)setF("sku",clean);}} note="Formato: ABC-001"/>
+              <Fld label="Cor / Referência" value={form.color} onChange={v=>setF("color",v)} placeholder="Ex: Azul"/>
+            </div>
+          </Card>
+          <Card>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+              <SectionTitle style={{marginBottom:0}}>Variantes — Tamanhos</SectionTitle>
+              <div style={{display:"flex",gap:6}}>
+                <button onClick={()=>{const r=variants[0]?.retailPrice||"";const w=variants[0]?.wholesalePrice||"";setVariants(SIZES_NUM.split(",").map(sz=>({sz,retailPrice:r,wholesalePrice:w,qty:0})));}} style={{padding:"4px 10px",borderRadius:5,border:`1px solid ${C.border}`,background:C.hover,cursor:"pointer",fontSize:11.5,color:C.inkMd}}>34-52</button>
+                <button onClick={()=>{const r=variants[0]?.retailPrice||"";const w=variants[0]?.wholesalePrice||"";setVariants(SIZES_LET.split(",").map(sz=>({sz,retailPrice:r,wholesalePrice:w,qty:0})));}} style={{padding:"4px 10px",borderRadius:5,border:`1px solid ${C.border}`,background:C.hover,cursor:"pointer",fontSize:11.5,color:C.inkMd}}>PP-XGG</button>
+                <button onClick={()=>{const sz=prompt("Tamanho:");if(sz&&!variants.find(v=>v.sz===sz.trim())){setVariants(p=>[...p,{sz:sz.trim(),retailPrice:"",wholesalePrice:"",qty:0}]);}}} style={{padding:"4px 10px",borderRadius:5,border:`1px solid ${C.border}`,background:C.hover,cursor:"pointer",fontSize:11.5,color:C.inkMd}}>+ Tamanho</button>
+              </div>
+            </div>
+            {variants.length===0&&<div style={{textAlign:"center",padding:"28px 0",color:C.inkFt,fontSize:13,border:`2px dashed ${C.border}`,borderRadius:8}}>Selecione os tamanhos acima para começar</div>}
+            {variants.length>0&&(<>
+              <div style={{display:"grid",gridTemplateColumns:"80px 1fr 1fr 90px 32px",gap:8,marginBottom:8,padding:"6px 10px",background:C.hover,borderRadius:7,alignItems:"center"}}>
+                <div style={{fontSize:10.5,color:C.inkLt,fontWeight:700,letterSpacing:.5}}>TAMANHO</div>
+                <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:10.5,color:C.inkLt,fontWeight:700,letterSpacing:.5}}>VAREJO R$</span>
+                  <button onClick={()=>{const v=prompt("Preço varejo para todos:");if(v!=null){const n=parseFloat(v.replace(",","."));if(!isNaN(n))applyAll("retailPrice",n.toFixed(2));}}} style={{fontSize:10,background:"none",border:"none",cursor:"pointer",color:C.gold}}>↓ todos</button></div>
+                <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:10.5,color:C.inkLt,fontWeight:700,letterSpacing:.5}}>ATACADO R$</span>
+                  <button onClick={()=>{const v=prompt("Preço atacado para todos:");if(v!=null){const n=parseFloat(v.replace(",","."));if(!isNaN(n))applyAll("wholesalePrice",n.toFixed(2));}}} style={{fontSize:10,background:"none",border:"none",cursor:"pointer",color:C.purple}}>↓ todos</button></div>
+                <div style={{fontSize:10.5,color:C.inkLt,fontWeight:700,letterSpacing:.5}}>GALPÃO</div>
+                <div/>
+              </div>
+              {sortSizes(variants.map(v=>v.sz)).map(sz=>{const v=variants.find(x=>x.sz===sz);if(!v)return null;const i=variants.indexOf(v);return(
+                <div key={v.sz} style={{display:"grid",gridTemplateColumns:"80px 1fr 1fr 90px 32px",gap:8,alignItems:"center",padding:"4px 10px",borderBottom:`1px solid ${C.border}`}}>
+                  <div style={{fontWeight:600,fontSize:14,color:C.ink}}>{v.sz}</div>
+                  <input type="text" inputMode="decimal" value={v.retailPrice} onChange={e=>setVariant(v.sz,"retailPrice",e.target.value)}
+                    onBlur={e=>{const n=parseFloat(e.target.value.replace(",","."));if(!isNaN(n))setVariant(v.sz,"retailPrice",n.toFixed(2));}}
+                    placeholder="0,00" style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:5,color:C.ink,padding:"7px 9px",fontSize:13.5,outline:"none"}}/>
+                  <input type="text" inputMode="decimal" value={v.wholesalePrice} onChange={e=>setVariant(v.sz,"wholesalePrice",e.target.value)}
+                    onBlur={e=>{const n=parseFloat(e.target.value.replace(",","."));if(!isNaN(n))setVariant(v.sz,"wholesalePrice",n.toFixed(2));}}
+                    placeholder="0,00" style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:5,color:C.purple,padding:"7px 9px",fontSize:13.5,outline:"none"}}/>
+                  <input type="number" value={v.qty} onChange={e=>setVariant(v.sz,"qty",e.target.value)}
+                    placeholder="0" style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:5,color:C.ink,padding:"7px 9px",fontSize:13.5,outline:"none"}}/>
+                  <button onClick={()=>setVariants(prev=>prev.filter((_,j)=>j!==i))} style={{background:C.redLt,border:"none",color:C.red,width:28,height:28,borderRadius:5,cursor:"pointer",fontSize:14}}>×</button>
+                </div>
+              );})}
+              <div style={{marginTop:10,padding:"8px 12px",background:C.hover,borderRadius:6,fontSize:12.5,color:C.inkMd,display:"flex",justifyContent:"space-between"}}>
+                <span>Total galpão:</span><strong>{variants.reduce((a,v)=>a+(Number(v.qty)||0),0)} peças</strong>
+              </div>
+            </>)}
+          </Card>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          <Card>
+            <SectionTitle>Resumo</SectionTitle>
+            <div style={{fontSize:13,color:C.inkMd,lineHeight:2.2}}>
+              <div><strong>Nome:</strong> {form.name||"—"}</div>
+              <div><strong>SKU:</strong> {form.sku||"—"}</div>
+              <div><strong>Categoria:</strong> {form.cat}</div>
+              <div><strong>Cor:</strong> {form.color||"—"}</div>
+              <div><strong>Tamanhos:</strong> {variants.length>0?variants.map(v=>v.sz).join(", "):"—"}</div>
+            </div>
+          </Card>
+          <Btn onClick={view==="editar"?saveEditProduto:saveProduto} full sz="lg" disabled={saving} v="success">
+            {saving?"Salvando...":(view==="editar"?"💾 Salvar Alterações":"✅ Cadastrar Produto")}
+          </Btn>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ── ENTRADA / SAÍDA ──
+  if(view==="entrada")return(
+    <div className="fu">
+      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:24}}>
+        <button onClick={()=>setView("list")} style={{background:"none",border:"none",color:C.inkMd,cursor:"pointer",fontSize:22}}>←</button>
+        <div className="cor" style={{fontSize:28,fontWeight:400}}>Movimentação de Estoque</div>
+      </div>
+      <Card style={{maxWidth:600}}>
+        <div style={{display:"flex",gap:8,marginBottom:16}}>
+          {["entrada","saida"].map(t=>(
+            <button key={t} onClick={()=>setEntTipo(t)} style={{flex:1,padding:"10px",borderRadius:7,
+              border:`1px solid ${entTipo===t?(t==="entrada"?C.green:C.red):C.border}`,
+              background:entTipo===t?(t==="entrada"?C.greenLt:C.redLt):C.surface,
+              color:entTipo===t?(t==="entrada"?C.green:C.red):C.inkMd,cursor:"pointer",fontWeight:600,fontSize:13}}>
+              {t==="entrada"?"↓ Entrada":"↑ Saída"}
+            </button>
+          ))}
+        </div>
+        <Fld label="Produto" value={entProd?.id||""} onChange={v=>{setEntProd(products.find(p=>p.id===Number(v))||null);setEntQtys({});}}
+          options={[{value:"",label:"Selecione um produto..."},...products.map(p=>({value:p.id,label:`${p.sku} — ${p.name}`}))]}/>
+        {entProd&&(<>
+          <SectionTitle style={{marginTop:12}}>Quantidades por tamanho</SectionTitle>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(100px,1fr))",gap:8,marginBottom:12}}>
+            {sortSizes(entProd.sizes||[]).map(sz=>(
+              <div key={sz} style={{textAlign:"center"}}>
+                <div style={{fontSize:11,fontWeight:700,color:C.inkMd,marginBottom:2}}>{sz}</div>
+                <div style={{fontSize:10,color:C.inkLt,marginBottom:4}}>Atual: {getQty(entProd.id,sz)}</div>
+                <input type="number" min="0" value={entQtys[sz]||""} onChange={e=>setEntQtys(p=>({...p,[sz]:e.target.value}))}
+                  placeholder="0" style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:5,color:C.ink,padding:"6px 8px",fontSize:13,outline:"none",textAlign:"center"}}/>
+              </div>
+            ))}
+          </div>
+          <Fld label="Observação (opcional)" value={entObs} onChange={setEntObs} placeholder="Ex: Chegada do fornecedor"/>
+        </>)}
+        <Btn onClick={handleEntrada} full sz="lg" disabled={saving} v={entTipo==="entrada"?"success":"danger"} style={{marginTop:8}}>
+          {saving?"Salvando...":(entTipo==="entrada"?"Registrar Entrada":"Registrar Saída")}
+        </Btn>
+      </Card>
+    </div>
+  );
+
+  // ── LISTA DE PRODUTOS COM ESTOQUE ──
+  return(
+    <div className="fu">
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+        <div>
+          <div className="cor" style={{fontSize:30,fontWeight:400}}>Estoque</div>
+          <div style={{fontSize:12,color:C.inkLt}}>{products.length} produtos cadastrados</div>
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={()=>setView("entrada")} style={{padding:"9px 16px",borderRadius:7,border:`1px solid ${C.border}`,background:C.surface,color:C.inkMd,cursor:"pointer",fontSize:13,fontWeight:500}}>↓ Dar Entrada</button>
+          {isAdmin&&<button onClick={()=>setView("pickCat")} style={{padding:"9px 16px",borderRadius:7,border:"none",background:C.ink,color:"#fff",cursor:"pointer",fontSize:13,fontWeight:600}}>+ Incluir Item</button>}
+        </div>
+      </div>
+      <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar produto ou SKU..."
+        style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,color:C.ink,padding:"9px 14px",fontSize:13.5,outline:"none",width:280,marginBottom:16}}/>
+      {filtered.length===0&&<Card style={{textAlign:"center",color:C.inkFt,padding:40}}>Nenhum produto encontrado.</Card>}
+      {filtered.map(p=>{
+        const cc=CAT_COLOR[p.cat]||"#C8C0B4";
+        const totalQty=stkG.filter(s=>s.pId===p.id).reduce((a,s)=>a+s.qty,0);
+        return(
+          <div key={p.id} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:14,marginBottom:8,transition:"all .12s"}}
+            onMouseEnter={e=>e.currentTarget.style.borderColor=C.gold}
+            onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <div style={{width:36,height:36,borderRadius:8,background:`${cc}20`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>{CAT_ICON[p.cat]||"📦"}</div>
+                <div>
+                  <div style={{fontWeight:600,fontSize:14}}>{p.name}</div>
+                  <div style={{fontSize:11,color:C.inkLt}}>{p.sku}{p.color?` · ${p.color}`:""} · {p.cat}</div>
+                </div>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:12,fontWeight:600,padding:"3px 10px",borderRadius:20,
+                  color:totalQty===0?C.red:C.green,background:totalQty===0?C.redLt:C.greenLt}}>
+                  {totalQty} peças
+                </span>
+                {isAdmin&&<button onClick={()=>startEdit(p)} style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${C.border}`,background:C.hover,color:C.inkMd,cursor:"pointer",fontSize:12}}>Editar</button>}
+              </div>
+            </div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+              {sortSizes(p.sizes||[]).map(sz=>{
+                const qty=getQty(p.id,sz);
+                return <span key={sz} style={{padding:"2px 8px",borderRadius:20,fontSize:12,fontWeight:500,
+                  background:qty===0?C.redLt:qty<5?C.goldLt:C.greenLt,
+                  color:qty===0?C.red:qty<5?C.gold:C.green}}>{sz}: {qty}</span>;
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function Products({products,setProducts,setStkG,setStkL,sales,showToast,logActivity}){
   const [view,setView]=useState("list");
   const [selId,setSelId]=useState(null);
