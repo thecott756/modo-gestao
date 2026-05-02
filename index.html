@@ -2277,23 +2277,31 @@ function EstoqueGalpao({products,setProducts,stkG,setStkG,setStkL,addMov,showToa
     const entries=Object.entries(entQtys).filter(([,q])=>Number(q)>0);
     if(entries.length===0){showToast("Informe ao menos uma quantidade","error");return;}
     setSaving(true);
+    let ok=0;
     try{
       for(const [sz,q] of entries){
         const qty=Number(q);const cur=getQty(entProd.id,sz);
         if(entTipo==="saida"&&qty>cur){showToast(`Estoque insuficiente: ${sz}`,"error");continue;}
         const newQty=cur+(entTipo==="entrada"?qty:-qty);
         const existing=stkG.find(s=>s.pId===entProd.id&&s.sz===sz);
-        if(existing?._id){await sb.from("stock_galpao").update({qty:newQty}).eq("id",existing._id);}
-        else{const{data}=await sb.from("stock_galpao").insert({product_id:entProd.id,size:sz,qty:newQty}).select().single();
-          if(data)setStkG(p=>[...p,{pId:entProd.id,sz,qty:newQty,_id:data.id}]);}
+        if(existing?._id){
+          const{error:updErr}=await sb.from("stock_galpao").update({qty:newQty}).eq("id",existing._id);
+          if(updErr){showToast(`Erro Supabase (update ${sz}): ${updErr.message}`,"error");continue;}
+        }else{
+          const{data,error:insErr}=await sb.from("stock_galpao").insert({product_id:entProd.id,size:sz,qty:newQty}).select().single();
+          if(insErr){showToast(`Erro Supabase (insert ${sz}): ${insErr.message}`,"error");continue;}
+          if(data)setStkG(p=>[...p,{pId:entProd.id,sz,qty:newQty,_id:data.id}]);
+        }
         setStkG(prev=>{const idx=prev.findIndex(s=>s.pId===entProd.id&&s.sz===sz);
           if(idx>=0){const u=[...prev];u[idx]={...u[idx],qty:newQty};return u;}return prev;});
         await addMov({type:entTipo,loc:"galpao",desc:`${entProd.name} – Tam ${sz} – ${qty} un.`,obs:entObs});
+        ok++;
       }
-      const total=entries.reduce((a,[,q])=>a+Number(q),0);
-      await logActivity(entTipo==="entrada"?"entrada_estoque":"saida_estoque",`${entProd.name} · ${total} un. · Galpão`);
-      showToast(`${entTipo==="entrada"?"Entrada":"Saída"} registrada! (${total} peças)`);
-      setEntProd(null);setEntQtys({});setEntObs("");setView("list");
+      if(ok>0){
+        await logActivity(entTipo==="entrada"?"entrada_estoque":"saida_estoque",`${entProd.name} · ${ok} tam. · Galpão`);
+        showToast(`${entTipo==="entrada"?"Entrada":"Saída"} registrada! (${ok} tamanho(s))`);
+        setEntProd(null);setEntQtys({});setEntObs("");setView("list");
+      }
     }catch(e){showToast("Erro: "+e.message,"error");}
     setSaving(false);
   };
