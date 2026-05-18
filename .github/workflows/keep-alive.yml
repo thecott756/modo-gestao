@@ -1,0 +1,22 @@
+name: Keep Supabase Alive
+
+on:
+  schedule:
+    - cron: '0 8 */3 * *'  # toda terça, sexta e segunda às 8h (UTC)
+  workflow_dispatch:        # permite rodar manualmente
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://murwkosaxlpkdrotuotk.supabase.co/rest/v1/products?select=id&limit=1" \
+            -H "apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im11cndrb3NheGxwa2Ryb3R1b3RrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI4OTIyNjIsImV4cCI6MjA4ODQ2ODI2Mn0.7FPuHUyRHYyWXIBc2Y-BPOsmsvBGLigaZb44KzP9HRw")
+          echo "Supabase status: $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "AVISO: Supabase retornou $STATUS"
+            exit 1
+          fi
+          echo "OK - Supabase ativo"
